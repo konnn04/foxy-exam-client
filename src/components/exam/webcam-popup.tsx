@@ -20,6 +20,7 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
   const devStatsRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const drawingUtilsRef = useRef<DrawingUtils | null>(null);
+  const latestLandmarksRef = useRef<any[] | null>(null);
   
   const [minimized, setMinimized] = useState(false);
   const [showMesh, setShowMesh] = useState(true);
@@ -61,6 +62,65 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
     };
   }, [dragging]);
 
+  // Periodic Face Cropping & Mock POST
+  useEffect(() => {
+    if (!stream) return;
+
+    const interval = setInterval(() => {
+      if (!latestLandmarksRef.current || !latestLandmarksRef.current.length) return;
+      if (!videoRef.current) return;
+
+      const video = videoRef.current;
+      const landmarks = latestLandmarksRef.current[0]; // Get first face
+
+      // Compute bounding box
+      let minX = 1, minY = 1, maxX = 0, maxY = 0;
+      for (const point of landmarks) {
+        minX = Math.min(minX, point.x);
+        minY = Math.min(minY, point.y);
+        maxX = Math.max(maxX, point.x);
+        maxY = Math.max(maxY, point.y);
+      }
+
+      // Add padding (e.g., 20% around the face)
+      const paddingX = (maxX - minX) * 0.2;
+      const paddingY = (maxY - minY) * 0.2;
+
+      minX = Math.max(0, minX - paddingX);
+      minY = Math.max(0, minY - paddingY);
+      maxX = Math.min(1, maxX + paddingX);
+      maxY = Math.min(1, maxY + paddingY);
+
+      const cropX = minX * video.videoWidth;
+      const cropY = minY * video.videoHeight;
+      const cropW = (maxX - minX) * video.videoWidth;
+      const cropH = (maxY - minY) * video.videoHeight;
+
+      if (cropW <= 0 || cropH <= 0) return;
+
+      // Draw cropped face to offscreen canvas
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = cropW;
+      offCanvas.height = cropH;
+      const offCtx = offCanvas.getContext("2d");
+      if (!offCtx) return;
+
+      offCtx.drawImage(
+        video,
+        cropX, cropY, cropW, cropH,
+        0, 0, cropW, cropH
+      );
+
+      // Convert to Base64
+      const base64Image = offCanvas.toDataURL("image/jpeg", 0.8);
+      console.log(`[MOCK FACE AUTH] Cropped face (W:${cropW.toFixed(0)}, H:${cropH.toFixed(0)}). Sending POST...`, base64Image.substring(0, 50) + '...');
+      // TODO: Replace with actual WEBRTC/API POST to server when ready
+      
+    }, 10000); // Trigger every 10 seconds
+
+    return () => clearInterval(interval);
+  }, [stream]);
+
   useImperativeHandle(ref, () => ({
     drawFrame: (results) => {
       if (!canvasRef.current || !videoRef.current) return;
@@ -84,6 +144,7 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
       let pitch = 0, yaw = 0, eyeMax = 0;
 
       if (results && results.faceLandmarks && results.faceLandmarks.length > 0) {
+        latestLandmarksRef.current = results.faceLandmarks;
         if (showMesh) {
            for (const lm of results.faceLandmarks) {
              drawingUtilsRef.current.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color: "#C0C0C070", lineWidth: 0.5 });

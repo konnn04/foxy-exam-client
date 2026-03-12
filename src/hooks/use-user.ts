@@ -37,16 +37,25 @@ export const useUserStore = create<UserStore>()(
       login: async (email: string, password: string) => {
         set({ isLoading: true });
         try {
-          const res = await api.post("/auth/login", {
-            email,
-            password,
-            device_name: "web-app",
-          });
-          const { token, user } = res.data;
+          const res = await api.post("/oauth/token", {
+            grant_type: "password",
+            client_id: import.meta.env.VITE_OAUTH_CLIENT_ID,
+            client_secret: import.meta.env.VITE_OAUTH_CLIENT_SECRET,
+            username: email,
+            password: password,
+            scope: "*",
+          }, { baseURL: "http://localhost:8000" }); 
+          
+          const token = res.data.access_token;
           localStorage.setItem("auth_token", token);
+          
+          const userRes = await api.get("/auth/me", {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+
           set({
             token,
-            user,
+            user: userRes.data,
             isAuthenticated: true,
             isLoading: false,
           });

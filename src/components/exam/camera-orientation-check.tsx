@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { FaceLandmarker, DrawingUtils } from "@mediapipe/tasks-vision";
-import { Loader2, CheckCircle, ShieldCheck, AlertCircle } from "lucide-react";
+import { Loader2, CheckCircle, ShieldCheck, AlertCircle, Mic } from "lucide-react";
 import { createFaceLandmarker, extractPitchYaw } from "@/lib/mediapipe-service";
 import {
   TARGET_INTERVAL_MS,
@@ -15,6 +15,7 @@ import {
   NOT_LOOKING_CONFIRM_FRAMES,
   EYE_LOOK_THRESHOLD,
 } from "@/config/mediapipe-config";
+import { DEV_MODE } from "@/config/app";
 
 interface CameraOrientationCheckProps {
   stream: MediaStream;
@@ -29,6 +30,8 @@ export function CameraOrientationCheck({ stream, onSuccess, onCancel }: CameraOr
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
   const requestRef = useRef<number>(0);
   const lastVideoTimeRef = useRef<number>(-1);
+  const audioRafRef = useRef<number>(0);
+  const [volume, setVolume] = useState(0);
   const lookingCounterRef = useRef(0);
   const lastProcessTimeRef = useRef(0);
   
@@ -187,13 +190,54 @@ export function CameraOrientationCheck({ stream, onSuccess, onCancel }: CameraOr
     return () => clearInterval(timer);
   }, [isLookingAtCamera, isDone]);
 
+  // Auto transition when done
+  useEffect(() => {
+    if (isDone) {
+      const timer = setTimeout(onSuccess, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [isDone, onSuccess]);
+
+  useEffect(() => {
+    if (!stream || stream.getAudioTracks().length === 0) return;
+
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const analyser = audioContext.createAnalyser();
+      const microphone = audioContext.createMediaStreamSource(stream);
+      
+      analyser.fftSize = 256;
+      microphone.connect(analyser);
+      
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      const updateVolume = () => {
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          sum += dataArray[i];
+        }
+        setVolume((sum / bufferLength) / 2.5);
+        audioRafRef.current = requestAnimationFrame(updateVolume);
+      };
+      updateVolume();
+
+      return () => {
+        if (audioRafRef.current) cancelAnimationFrame(audioRafRef.current);
+        audioContext.close().catch(() => {});
+      };
+    } catch (e) {
+      console.error("Audio visualizer error", e);
+    }
+  }, [stream]);
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background/90 p-4 relative z-50">
-      <Card className="w-full max-w-4xl shadow-2xl flex flex-col md:flex-row overflow-hidden">
+      <Card className="w-full max-w-7xl shadow-2xl flex flex-col md:flex-row overflow-hidden relative pb-12">
         
         {/* Left side: Camera & Feedback — video is ALWAYS rendered */}
-        <div className="md:w-1/2 bg-black relative flex flex-col items-center justify-center p-6 border-b md:border-b-0 md:border-r">
+        <div className="md:w-3/5 bg-black relative flex flex-col items-center justify-center p-6 border-b md:border-b-0 md:border-r">
           <div className="relative w-full aspect-video rounded-xl overflow-hidden border-2 border-primary/50 bg-gray-900">
             {/* Debug info overlay */}
             <div ref={debugRef} className="absolute top-1 left-1 z-[60] bg-black/80 text-green-400 text-[10px] p-1 font-mono rounded max-w-full truncate" />
@@ -273,7 +317,7 @@ export function CameraOrientationCheck({ stream, onSuccess, onCancel }: CameraOr
         </div>
 
         {/* Right side: Exam Rules and Instructions */}
-        <div className="md:w-1/2 p-6 flex flex-col justify-between bg-card relative">
+        <div className="md:w-2/5 p-6 flex flex-col justify-between bg-card relative">
           
           {/* Blur Overlay if not looking */}
           {(!isLookingAtCamera || !isLoaded) && !isDone && (
@@ -312,16 +356,29 @@ export function CameraOrientationCheck({ stream, onSuccess, onCancel }: CameraOr
                 Hủy
               </Button>
             )}
+            {DEV_MODE && (
+              <Button 
+                variant="outline" 
+                className="flex-1 border-dashed border-red-500 text-red-500 hover:bg-red-500 hover:text-white"
+                onClick={onSuccess}
+              >
+                [Dev] Bỏ qua
+              </Button>
+            )}
             <Button 
               className="flex-1" 
-              onClick={onSuccess} 
-              disabled={!isDone}
+              disabled={true}
             >
-              {isDone ? "Vào phòng thi" : "Đang chuẩn hóa tư thế..."}
+              {isDone ? "Chuẩn hóa thành công. Đang chuyển tiếp..." : "Đang chuẩn hóa tư thế..."}
             </Button>
           </div>
         </div>
 
+        {/* Global Footer Mic Bar */}
+        <div className="absolute bottom-0 left-0 right-0 h-12 bg-black/80 flex items-center px-4 gap-3 border-t border-white/10 z-50">
+          <Mic className={`w-5 h-5 ${volume > 5 ? 'text-green-400' : 'text-gray-400'}`} />
+          <Progress value={Math.min(100, volume)} className="h-2 flex-1 [&>div]:bg-green-500 bg-gray-700" />
+        </div>
       </Card>
     </div>
   );

@@ -61,9 +61,20 @@ interface ExamDetail {
   };
 }
 
+interface ExamConfig {
+  level: "none" | "standard" | "strict";
+  requireApp?: boolean;
+  requireCamera?: boolean;
+  requireMic?: boolean;
+  requireFaceAuth?: boolean;
+  detectBannedApps?: boolean;
+  bannedApps?: string[];
+}
+
 export default function ExamDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [exam, setExam] = useState<ExamDetail | null>(null);
+  const [examConfig, setExamConfig] = useState<ExamConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const navigate = useNavigate();
@@ -75,6 +86,9 @@ export default function ExamDetailPage() {
       try {
         const res = await api.get(`/student/exams/${id}`);
         setExam(res.data.exam ?? res.data);
+        if (res.data.config) {
+          setExamConfig(res.data.config);
+        }
       } catch {
         toast.error("Không thể tải thông tin bài thi");
         navigate("/dashboard");
@@ -231,13 +245,30 @@ export default function ExamDetailPage() {
           <div className="rounded-lg bg-muted/50 p-4 space-y-2">
             <p className="text-sm font-medium flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-yellow-600" />
-              Lưu ý khi làm bài
+              Lưu ý & Quy định thi
             </p>
             <ul className="text-sm text-muted-foreground space-y-1 ml-6 list-disc">
-              <li>Không được chuyển tab hoặc rời khỏi trang thi</li>
-              <li>Webcam sẽ được bật trong suốt quá trình thi</li>
-              <li>Không chụp ảnh màn hình hoặc sao chép nội dung</li>
-              <li>Bài thi sẽ tự nộp khi hết thời gian</li>
+              <li>Mức độ giám sát: <strong>
+                  {examConfig?.level === 'strict' ? 'Nghiêm ngặt' : examConfig?.level === 'standard' ? 'Tiêu chuẩn' : 'Không có'}
+              </strong></li>
+              {examConfig?.requireApp || examConfig?.level === 'strict' ? (
+                <li>Yêu cầu sử dụng <strong>Ứng dụng Exam Client trên Máy tính</strong>.</li>
+              ) : (
+                <li>Có thể thi trên trình duyệt hoặc ứng dụng.</li>
+              )}
+              {examConfig?.requireCamera !== false && (
+                <li>Webcam sẽ được bật trong suốt quá trình thi để giám sát tự động.</li>
+              )}
+              {examConfig?.requireFaceAuth && (
+                <li>Bắt buộc <strong>xác thực khuôn mặt (FaceID)</strong> liên tục.</li>
+              )}
+              {(examConfig?.detectBannedApps || examConfig?.level === 'strict') && (
+                <li>Hệ thống <strong>sẽ tự động giám sát các tiến trình/phần mềm cấm</strong> chạy ngầm trên máy bạn.</li>
+              )}
+              {examConfig?.level === 'strict' && (
+                <li>Không được phép chia nhỏ màn hình (chế độ độc quyền). Cấm phím tắt.</li>
+              )}
+              <li>Bài thi sẽ tự nộp khi quá trình kết thúc hoặc hết thời gian.</li>
             </ul>
           </div>
 

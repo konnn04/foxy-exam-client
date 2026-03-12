@@ -97,3 +97,10 @@ Khi cắm ống Client -> Backend AI xử lý, mạng cần trang bị thêm cá
 1. **Mutual TLS (mTLS):** Không chỉ mã hóa `https` (Server chứng thực), hệ thống có thể cấp sẵn một chứng chỉ Client Certificate được đúc (build) ngầm vào bên trong bản gốc Electron. API Gateway chỉ chấp nhận Socket đến từ bản Build chuẩn (hạn chế Hacker nhái request từ Postman hoặc Script Python bắn dữ liệu sạch ảo).
 2. **Payload Signing (HMAC-SHA256):** Mỗi Chunk dữ liệu gửi lên (Ví dụ danh sách App Cấm, IP...) đều phải được đính kèm Hash Code dựa trên 1 Secret Key ngầm hóa (Obsufcated) dưới C++. Hacker chặn bắt Request, đổi từ Payload `[cheat_engine.exe]` thành `[chrome.exe]` cũng bất khả thi vì Hash chữ ký không khớp.
 3. **Token Rotation / Short-lived JWT qua WSS:** WebSocket Token chỉ nên có tuổi thọ tính bằng phút. Sau mỗi 5 phút làm bài thi, cần có cơ chế Re-auth chéo để đảm bảo phiên kết nối không bị "Hijacked" (Cướp quyền điều khiển) giữa chừng.
+
+
+| Chọn cam và mic |                         |                         |                         |                         |
+|-----------------|-------------------------|-------------------------|-------------------------|-------------------------|
+| **Check mic**   | Đọc theo màn hình       | Kiểm tra môi trường     | Nhận dạng giọng nói     |                         |
+| **Check cam**   | Khuôn mặt điểm danh (liên tục) | Lineness              | Mắt và hướng            | Vật cấm và người (liên tục) | Giám sát online |
+| **Hệ thống**    | Tiến trình (Liên tục)  | Logging (liên tục)      | Số lượng màn và cam     |                         |

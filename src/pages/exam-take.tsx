@@ -1,17 +1,23 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
+import { examSocket } from "@/lib/exam-socket";
+import { webrtcService } from "@/lib/webrtc-service";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import { useAlertDialog } from "@/hooks/use-alert-dialog";
 import { WebcamPopup, WebcamPopupHandle } from "@/components/exam/webcam-popup";
 import { CameraCheck } from "@/components/exam/camera-check";
-import { CameraLivenessCheck } from "@/components/exam/camera-liveness-check";
+import { CameraFaceAuthCheck } from "@/components/exam/camera-face-auth-check";
 import { CameraOrientationCheck } from "@/components/exam/camera-orientation-check";
+import { CameraLivenessCheck } from "@/components/exam/camera-liveness-check";
+import { MicrophoneVoiceCheck } from "@/components/exam/microphone-voice-check";
+import { EnvironmentCheck } from "@/components/exam/environment-check";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 import { useFaceMonitor } from "@/hooks/use-face-monitor";
+import { useExamLockdown } from "@/hooks/use-exam-lockdown";
 import type { FaceLandmarkerResult } from "@mediapipe/tasks-vision";
 import { DEV_MODE, NO_LOCKSCREEN_WHEN_DEV_MODE } from "@/config/app";
 
@@ -28,67 +34,7 @@ import {
   Video,
 } from "lucide-react";
 
-interface Option {
-  id: number;
-  label?: string;
-  content: string;
-}
-
-interface Question {
-  id: number;
-  content: string;
-  type: string; 
-  options?: Option[];
-  answers?: Option[];
-  image_url?: string;
-}
-
-interface Answer {
-  question_id: number;
-  answer_id?: number | null;
-  answer_content?: string | null;
-}
-
-interface ExamTrackingConfig {
-  level: "none" | "standard" | "strict";
-  requireApp?: boolean;          // Bắt buộc dùng Electron App
-  requireCamera?: boolean;       // Mở Camera kiểm tra tập trung
-  requireMic?: boolean;          // Ghi âm mic (Chưa chạy, lưu config)
-  requireFaceAuth?: boolean;     // Giám sát xác minh khuôn mặt
-  bannedAppsExceptions?: string[]; // Các app cấm được ngoại lệ
-}
-
-interface ExamData {
-  exam: {
-    id: number;
-    name?: string;
-    title?: string;
-    duration?: number;
-    duration_minutes?: number;
-  };
-  attempt: {
-    id: number;
-    started_at: string;
-    time_remaining?: number;
-  };
-  config?: ExamTrackingConfig;   // Config tracking mode (default: strict if missing)
-  questions: {
-    data: Question[];
-    current_page: number;
-    last_page: number;
-    per_page: number;
-    total: number;
-  };
-  all_question_ids: number[];
-  answers: Answer[];
-  flagged: number[];
-}
-
-interface Violation {
-  type: string;
-  timestamp: number;
-  message: string;
-}
+import type { ExamData, ExamTrackingConfig, Answer, Violation } from "@/types/exam";
 
 export default function ExamTakePage() {
   const { examId, attemptId } = useParams<{
@@ -121,11 +67,32 @@ export default function ExamTakePage() {
   const [isBlurred, setIsBlurred] = useState(false);
   const [blurReason, setBlurReason] = useState("");
   const [devBypassLock, setDevBypassLock] = useState(false);
-  const [hardwareLock, setHardwareLock] = useState("");
-  
-  const [bannedApps, setBannedApps] = useState<string[]>([]);
-  const [screenCount, setScreenCount] = useState<number>(1);
-  const keyLogsRef = useRef<{time: string, type: string, data: string}[]>([]);
+  const [, setWsDisconnected] = useState(false);
+
+  const addViolation = useCallback((type: string, message: string) => {
+    const v: Violation = { type, timestamp: Date.now(), message };
+    setViolations((prev) => [...prev, v]);
+    
+    // Log violation to WebSocket
+    examSocket.logEvent('violation', { violationType: type, message });
+    
+    if (DEV_MODE && NO_LOCKSCREEN_WHEN_DEV_MODE) {
+      toast.error(`[Dev Bypass] ${message}`);
+    } else {
+      setIsBlurred(true);
+      setBlurReason(message);
+    }
+  }, [toast]);
+
+  const { hardwareLock, bannedApps, screenCount, keyLogs, clearHardwareLock } = useExamLockdown({
+    wizardPhase,
+    config,
+    examId,
+    submitting,
+    addViolation,
+    setIsBlurred,
+    setBlurReason,
+  });
 
   const perPage = data?.questions.per_page ?? 5;
   const totalQuestions = data?.questions.total ?? 0;
@@ -141,12 +108,12 @@ export default function ExamTakePage() {
 
   const { isLoaded: monitorLoaded, status: faceStatus, error: monitorError } = useFaceMonitor(
     cameraStream,
-    wizardPhase === 4,
+    wizardPhase === 7,
     handleFrameRender
   );
 
   let monitorWarning = "";
-  if (wizardPhase === 4 && (!submitting && data)) {
+  if (wizardPhase === 7 && (!submitting && data)) {
     if (!monitorLoaded && !monitorError) {
       monitorWarning = "Đang đồng bộ luồng theo dõi AI chống gian lận...";
     } else if (monitorLoaded) {
@@ -199,30 +166,9 @@ export default function ExamTakePage() {
   const localIdx = globalIdx % perPage;
   const currentQuestion = currentQuestions[localIdx];
 
-  // ─── Phase 0: Checking Config Error ─────────────────────────
-  if (configError) {
-    return (
-      <div className="flex h-screen flex-col items-center justify-center bg-background p-6">
-        <ShieldAlert className="w-16 h-16 text-destructive mb-4" />
-        <h2 className="text-xl font-bold text-destructive mb-2">Không đủ điều kiện truy cập</h2>
-        <p className="text-muted-foreground text-center max-w-md">{configError}</p>
-        <Button className="mt-6" variant="outline" onClick={() => navigate("/dashboard")}>
-          Quay lại Bảng điều khiển
-        </Button>
-      </div>
-    );
-  }
-
-  if (wizardPhase === 0) {
-    return (
-      <div className="flex h-screen flex-col items-center justify-center bg-background">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mb-4" />
-        <p className="text-muted-foreground">Đang lấy cấu hình bài thi...</p>
-      </div>
-    );
-  }
-
   // ─── Phase 0: Pre-Flight Config Fetch ───────────────────────
+  // IMPORTANT: This useEffect MUST be declared before any early returns
+  // to comply with React Rules of Hooks (hooks cannot be conditionally skipped).
   useEffect(() => {
     if (wizardPhase !== 0) return;
 
@@ -232,8 +178,8 @@ export default function ExamTakePage() {
         const d: ExamData = res.data;
         setData(d);
         
-        // Default to strict if backend hasn't implemented it yet
-        const remoteConfig = d.config || { level: "strict", requireApp: true, requireCamera: true };
+        // Default to none if backend config is missing
+        const remoteConfig = d.config || { level: "none", requireApp: false, requireCamera: false };
         setConfig(remoteConfig);
 
         const isElectron = window.electronAPI?.isElectron === true;
@@ -258,11 +204,10 @@ export default function ExamTakePage() {
           }
         }
 
-        if (remoteConfig.level === "none" || remoteConfig.requireCamera === false) {
-           // Skip camera wizard entirely
-           setWizardPhase(4);
+        if (remoteConfig.level === "none" && !remoteConfig.requireCamera && !remoteConfig.detectBannedApps && !remoteConfig.requireFaceAuth) {
+          setWizardPhase(7); // Skip straight to exam
         } else {
-           setWizardPhase(1);
+          setWizardPhase(1); // Setup Camera
         }
         
       } catch (err) {
@@ -272,21 +217,37 @@ export default function ExamTakePage() {
     })();
   }, [wizardPhase, examId, attemptId]);
 
+
+  // Track mouse leaving the window
+  useEffect(() => {
+    if (wizardPhase < 7) return;
+
+    const handleMouseLeave = (e: MouseEvent) => {
+      if (e.clientY <= 0 || e.clientX <= 0 || (e.clientX >= window.innerWidth || e.clientY >= window.innerHeight)) {
+        examSocket.logEvent('cursor_left', {
+          reason: 'Cursor moved outside viewport boundaries'
+        });
+      }
+    };
+
+    document.addEventListener("mouseleave", handleMouseLeave);
+    return () => {
+      document.removeEventListener("mouseleave", handleMouseLeave);
+    };
+  }, [wizardPhase]);
+
   const handleCameraConfirm = (stream: MediaStream) => {
     setCameraStream(stream);
-    setWizardPhase(2);
-  };
 
-  const handleLivenessSuccess = () => {
-    setWizardPhase(3);
-  };
-  
-  const handleOrientationSuccess = () => {
-    setWizardPhase(4);
+    if (config?.level === "none" && !config.detectBannedApps && !config.requireFaceAuth) {
+      setWizardPhase(7); 
+    } else {
+      setWizardPhase(2); 
+    }
   };
 
   useEffect(() => {
-    if (wizardPhase < 4) return;
+    if (wizardPhase < 7) return;
 
     (async () => {
       try {
@@ -350,6 +311,7 @@ export default function ExamTakePage() {
 
   const handleGoToQuestion = (idx: number) => {
     if (idx < 0 || idx >= totalQuestions) return;
+    examSocket.logEvent('navigation', { fromQuestion: globalIdx, toQuestion: idx });
     const targetPage = Math.floor(idx / perPage) + 1;
     if (targetPage !== currentPage) {
       fetchPage(targetPage, idx);
@@ -383,247 +345,61 @@ export default function ExamTakePage() {
     return () => clearInterval(timer);
   }, [timeLeft, submitting]);
 
-  const addViolation = useCallback((type: string, message: string) => {
-    const v: Violation = { type, timestamp: Date.now(), message };
-    setViolations((prev) => [...prev, v]);
-    
-    if (DEV_MODE && NO_LOCKSCREEN_WHEN_DEV_MODE) {
-      toast.error(`[Dev Bypass] ${message}`);
-    } else {
-      setIsBlurred(true);
-      setBlurReason(message);
-    }
-  }, [toast]);
 
+
+  // ─── WebSocket & WebRTC Room Connection ───────────────────────
   useEffect(() => {
-    if (wizardPhase < 4) return;
-    const trackingLvl = config?.level || "strict";
-    
-    // Level 'none' still tracks tab switching/blur, but bypasses strict hooks
-    const handleVisibilityChange = () => {
-      if (document.hidden && trackingLvl !== "none") {
-        addViolation("tab_switch", "Bạn đã chuyển tab hoặc rời khỏi trang thi.");
-      }
-    };
+    if (wizardPhase < 7 || !data) return;
 
-    const handleBlur = () => {
-      if (trackingLvl !== "none") {
-        addViolation("window_blur", "Bạn đã chuyển sang cửa sổ khác.");
-      }
-    };
+    const examIdNum = parseInt(examId || '0');
+    const attemptIdNum = parseInt(attemptId || '0');
+    if (!examIdNum || !attemptIdNum) return;
 
-    const handleContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-    };
+    examSocket.joinRoom(examIdNum, attemptIdNum);
+    examSocket.logEvent('exam_start', {
+      examName: data.exam.name || data.exam.title,
+      totalQuestions: data.questions.total,
+    });
 
-    if (window.electronAPI?.startGlobalHook && trackingLvl === "strict") {
-      window.electronAPI.startGlobalHook();
-      
-      const handleGlobalHook = (_: any, payload: { type: string, data: string }) => {
-        keyLogsRef.current.push({
-          time: new Date().toISOString(),
-          type: payload.type,
-          data: payload.data
-        });
-        
-        if (payload.type === "keydown") {
-          const lowerKey = payload.data.toLowerCase();
-          if (lowerKey === "printscreen") {
-            addViolation("screenshot", "Bạn đã cố chụp ảnh màn hình.");
-          } else if (["c", "v", "a", "p", "s", "u"].includes(lowerKey)) {
-          } else if (lowerKey === "f12") {
-            if (!DEV_MODE) {
-              addViolation("devtools", "Bạn đã cố mở Developer Tools.");
-            }
-          }
-        }
-      };
-      
-      window.electronAPI.onGlobalHookEvent(handleGlobalHook);
-      
-      const handleDevToolsOpened = () => {
-        if (!DEV_MODE) {
-          addViolation("devtools", "Phát hiện mở Developer Tools.");
-        }
-      };
+    examSocket.onDisconnect(() => {
+      setWsDisconnected(true);
+      if (!DEV_MODE) {
+        setIsBlurred(true);
+        setBlurReason('Mất kết nối với máy chủ giám sát. Đang kết nối lại...');
+      }
+    });
 
-      if (window.electronAPI.onDevToolsOpened) {
-        window.electronAPI.onDevToolsOpened(handleDevToolsOpened);
-      }
-      
-      (window as any)._cleanupGlobalHook = () => {
-        if (window.electronAPI?.offGlobalHookEvent) {
-          window.electronAPI.offGlobalHookEvent(handleGlobalHook);
-        }
-        if (window.electronAPI?.offDevToolsOpened) {
-          window.electronAPI.offDevToolsOpened(handleDevToolsOpened);
-        }
-        if (window.electronAPI?.stopGlobalHook) {
-          window.electronAPI.stopGlobalHook();
-        }
-      };
-    }
+    examSocket.onReconnect(() => {
+      setWsDisconnected(false);
+      setIsBlurred(false);
+      setBlurReason('');
+    });
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "PrintScreen") {
-        e.preventDefault();
-        return;
-      }
-      if (e.ctrlKey || e.metaKey) {
-        const blockedKeys = ["c", "v", "a", "p", "s", "u", "shift"];
-        if (blockedKeys.includes(e.key.toLowerCase())) {
-          e.preventDefault();
-          addViolation("keyboard_shortcut", `Phím tắt bị cấm: ${e.ctrlKey ? "Ctrl" : "Cmd"}+${e.key.toUpperCase()}`);
-          return;
-        }
-      }
-      if (e.key === "F12") {
-        if (!DEV_MODE) {
-          e.preventDefault();
-        }
-      }
-    };
-
-    const handleCopy = (e: ClipboardEvent) => {
-      e.preventDefault();
-      addViolation("copy", "Bạn đã cố sao chép nội dung.");
-    };
-    
-    const handleMouseDownFallback = (e: MouseEvent) => {
-      keyLogsRef.current.push({
-        time: new Date().toISOString(),
-        type: "mousedown_fallback",
-        data: `X:${e.clientX}, Y:${e.clientY}, Button:${e.button}`
+    if (cameraStream) {
+      webrtcService.init({
+        examId: examIdNum,
+        localStream: cameraStream,
       });
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("blur", handleBlur);
-    document.addEventListener("contextmenu", handleContextMenu);
-    document.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("copy", handleCopy);
-    document.addEventListener("cut", handleCopy);
-    document.addEventListener("mousedown", handleMouseDownFallback);
-
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("blur", handleBlur);
-      document.removeEventListener("contextmenu", handleContextMenu);
-      document.removeEventListener("keydown", handleKeyDown);
-      document.removeEventListener("copy", handleCopy);
-      document.removeEventListener("cut", handleCopy);
-      document.removeEventListener("mousedown", handleMouseDownFallback);
-      
-      if ((window as any)._cleanupGlobalHook) {
-        (window as any)._cleanupGlobalHook();
-      }
-    };
-  }, [wizardPhase, addViolation, submitting]);
-
-  useEffect(() => {
-    if (wizardPhase < 4) return;
-    const trackingLvl = config?.level || "strict";
-    
-    if (trackingLvl === "strict" && window.electronAPI?.setAlwaysOnTop) {
-      window.electronAPI.setAlwaysOnTop(true);
     }
-    
-    if (window.electronAPI?.getNetworkInfo) {
-      window.electronAPI.getNetworkInfo().then(info => {
-        console.log("Exam Client Network Info:", info);
-      }).catch(e => console.error("Failed to fetch network info", e));
-    }
-    
+
+    const handleSignal = (e: CustomEvent) => {
+      const signal = e.detail;
+      if (signal.signalType === 'stop-exam') {
+        toast.error(
+          "Bài thi đã bị đình chỉ",
+          signal.data?.reason || "Giám thị đã buộc dừng bài thi của bạn."
+        );
+        handleSubmit(true);
+      }
+    };
+    window.addEventListener('webrtc-signal', handleSignal as EventListener);
+
     return () => {
-      if (window.electronAPI?.setAlwaysOnTop) {
-        window.electronAPI.setAlwaysOnTop(false);
-      }
+      examSocket.leaveRoom();
+      webrtcService.destroy();
+      window.removeEventListener('webrtc-signal', handleSignal as EventListener);
     };
-  }, [wizardPhase]);
-
-  useEffect(() => {
-    if (wizardPhase < 4) return;
-    const trackingLvl = config?.level || "strict";
-    if (trackingLvl !== "strict") return; // Banned Apps & Multi-screen only for strict
-    
-    const monitorInterval = setInterval(async () => {
-      let isLocked = false;
-      let lockMsgs: string[] = [];
-
-      if (window.electronAPI) {
-        try {
-          if (window.electronAPI.getScreenCount) {
-            const count = await window.electronAPI.getScreenCount();
-            setScreenCount(count);
-            if (count > 1) {
-              isLocked = true;
-              lockMsgs.push(`Phát hiện ${count} màn hình. Vui lòng ngắt kết nối màn hình phụ.`);
-            }
-          }
-          if (window.electronAPI.getRunningBannedApps) {
-            const apps = await window.electronAPI.getRunningBannedApps();
-            setBannedApps(apps);
-            if (apps.length > 0) {
-              isLocked = true;
-              lockMsgs.push(`Phát hiện phần mềm bị cấm: ${apps.join(', ')}. Vui lòng tắt phần mềm.`);
-            }
-          }
-        } catch (e) {
-          console.error("Lỗi Hardware Check:", e);
-        }
-      }
-
-      if (isLocked) {
-        const fullReason = lockMsgs.join("\n");
-        setHardwareLock(fullReason);
-      } else {
-        setHardwareLock(prev => {
-          if (prev !== "") {
-            setIsBlurred(false);
-            setBlurReason("");
-          }
-          return "";
-        });
-      }
-    }, 3000); 
-    
-    return () => clearInterval(monitorInterval);
-  }, [wizardPhase, toast]);
-
-  useEffect(() => {
-    if (wizardPhase < 4) return;
-    const trackingLvl = config?.level || "strict";
-
-    const requestFullscreen = async () => {
-      if (trackingLvl === "none") return; // Optional for non-tracking
-      try {
-        await document.documentElement.requestFullscreen();
-      } catch {
-      }
-    };
-    requestFullscreen();
-
-    const handleFullscreenChange = () => {
-      if (!document.fullscreenElement && wizardPhase >= 4 && !submitting) {
-        if (trackingLvl !== "none") {
-          const blurReasonFullscreen = "Chế độ xem toàn màn hình đã bị tắt.";
-          addViolation("exit_fullscreen", blurReasonFullscreen);
-          
-          if (DEV_MODE && NO_LOCKSCREEN_WHEN_DEV_MODE) {
-            toast.error(`[Dev Bypass] ${blurReasonFullscreen}`);
-          } else {
-            setIsBlurred(true);
-            setBlurReason(blurReasonFullscreen);
-          }
-        }
-      }
-    };
-
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-    };
-  }, [wizardPhase, addViolation, submitting]);
+  }, [wizardPhase, data?.exam?.id, cameraStream]);
 
   const dismissBlur = async () => {
     try {
@@ -660,12 +436,14 @@ export default function ExamTakePage() {
   const handleSelectOption = (questionId: number, optionId: number) => {
     const answer: Answer = { question_id: questionId, answer_id: optionId };
     setAnswers((prev) => new Map(prev).set(questionId, answer));
+    examSocket.logEvent('answer_selected', { questionId, optionId });
     saveAnswer(questionId, optionId);
   };
 
   const handleEssayChange = (questionId: number, content: string) => {
     const answer: Answer = { question_id: questionId, answer_content: content };
     setAnswers((prev) => new Map(prev).set(questionId, answer));
+    examSocket.logEvent('essay_typed', { questionId, length: content.length });
     saveAnswer(questionId, null, content);
   };
 
@@ -723,7 +501,7 @@ export default function ExamTakePage() {
 
       if (window.electronAPI?.saveExamLog) {
         try {
-          await window.electronAPI.saveExamLog(examId || "unknown", violations, keyLogsRef.current);
+          await window.electronAPI.saveExamLog(examId || "unknown", violations, keyLogs);
         } catch (e) {
           console.error("Failed to save exam log", e);
         }
@@ -744,16 +522,51 @@ export default function ExamTakePage() {
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   };
 
+  // ─── Early returns (MUST be after ALL hooks) ────────────────
+  if (configError) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center bg-background p-6">
+        <ShieldAlert className="w-16 h-16 text-destructive mb-4" />
+        <h2 className="text-xl font-bold text-destructive mb-2">Không đủ điều kiện truy cập</h2>
+        <p className="text-muted-foreground text-center max-w-md">{configError}</p>
+        <Button className="mt-6" variant="outline" onClick={() => navigate("/dashboard")}>
+          Quay lại Bảng điều khiển
+        </Button>
+      </div>
+    );
+  }
+
+  if (wizardPhase === 0) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mb-4" />
+        <p className="text-muted-foreground">Đang lấy cấu hình bài thi...</p>
+      </div>
+    );
+  }
+
   if (wizardPhase === 1) {
-    return <CameraCheck onConfirm={handleCameraConfirm} />;
+    return <CameraCheck onConfirm={handleCameraConfirm} onSkip={() => navigate("/dashboard")} />;
   }
   
   if (wizardPhase === 2 && cameraStream) {
-    return <CameraLivenessCheck stream={cameraStream} onSuccess={handleLivenessSuccess} onCancel={() => navigate("/dashboard")} />;
+    return <CameraFaceAuthCheck stream={cameraStream} onSuccess={() => setWizardPhase(3)} onCancel={() => navigate("/dashboard")} />;
   }
-  
+
   if (wizardPhase === 3 && cameraStream) {
-    return <CameraOrientationCheck stream={cameraStream} onSuccess={handleOrientationSuccess} onCancel={() => navigate("/dashboard")} />;
+    return <CameraOrientationCheck stream={cameraStream} onSuccess={() => setWizardPhase(4)} onCancel={() => navigate("/dashboard")} />;
+  }
+
+  if (wizardPhase === 4 && cameraStream) {
+    return <CameraLivenessCheck stream={cameraStream} onSuccess={() => setWizardPhase(5)} onCancel={() => navigate("/dashboard")} />;
+  }
+
+  if (wizardPhase === 5 && cameraStream) {
+    return <MicrophoneVoiceCheck stream={cameraStream} onSuccess={() => setWizardPhase(6)} onCancel={() => navigate("/dashboard")} />;
+  }
+
+  if (wizardPhase === 6) {
+    return <EnvironmentCheck config={config} onSuccess={() => setWizardPhase(7)} onCancel={() => navigate("/dashboard")} />;
   }
 
   if (loading || !data) {
@@ -803,7 +616,7 @@ export default function ExamTakePage() {
       )}
 
       {}
-      {isBlurred && (
+      {(isBlurred || hardwareLock !== "") && (
         <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-xl">
           <div className="bg-card border rounded-2xl p-8 max-w-md text-center space-y-4 shadow-2xl">
             <div className="flex justify-center">
@@ -812,9 +625,9 @@ export default function ExamTakePage() {
               </div>
             </div>
             <h2 className="text-xl font-bold text-destructive">
-              Cảnh báo vi phạm!
+              {hardwareLock !== "" ? "Thiết bị/Phần mềm không hợp lệ!" : "Cảnh báo vi phạm!"}
             </h2>
-            <p className="text-muted-foreground">{blurReason}</p>
+            <p className="text-muted-foreground">{hardwareLock !== "" ? hardwareLock : blurReason}</p>
             <p className="text-sm text-muted-foreground">
               Hành vi này đã được ghi nhận ({violations.length} lần vi phạm).
               <br />
@@ -835,7 +648,7 @@ export default function ExamTakePage() {
 
             {DEV_MODE && hardwareLock !== "" && (
                <Button onClick={() => {
-                 setHardwareLock("");
+                 clearHardwareLock();
                  dismissBlur();
                }} variant="outline" className="w-full border-dashed border-red-500 text-red-500 hover:bg-red-500 hover:text-white mt-2">
                  [Dev] Ignore Lock
@@ -1095,6 +908,12 @@ export default function ExamTakePage() {
             <div className="flex items-center gap-1" title="Số Camera">
               <Video className="h-3 w-3 text-green-500" />
               <span>1 Camera</span>
+            </div>
+          )}
+          {(config?.detectBannedApps || (config?.level === 'strict')) && (
+            <div className="flex items-center gap-1" title="Giám sát tiến trình">
+              <ShieldAlert className="h-3 w-3 text-green-500" />
+              <span>Theo dõi tiến trình</span>
             </div>
           )}
           {bannedApps.length > 0 && (
