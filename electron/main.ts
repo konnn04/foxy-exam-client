@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from "electron";
+import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session } from "electron";
 import path from "path";
 import { fileURLToPath } from "url";
 import { exec } from "child_process";
@@ -68,6 +68,37 @@ app.on("activate", () => {
 
 
 app.whenReady().then(() => {
+  // Allow renderer getDisplayMedia() and show native source picker in Electron.
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+    if (permission === "display-capture" || permission === "media") {
+      return true;
+    }
+    return false;
+  });
+
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    if (permission === "display-capture" || permission === "media") {
+      callback(true);
+      return;
+    }
+    callback(false);
+  });
+
+  session.defaultSession.setDisplayMediaRequestHandler(
+    async (_request, callback) => {
+      // Fallback when system picker is unavailable: use first screen source.
+      const sources = await desktopCapturer.getSources({
+        types: ["screen"],
+        thumbnailSize: { width: 0, height: 0 },
+      });
+      callback({ video: sources[0], audio: "none" });
+    },
+    {
+      // Ask OS/Electron to show native picker dialog when available.
+      useSystemPicker: true,
+    }
+  );
+
   ipcMain.handle("get-screen-count", () => {
     return screen.getAllDisplays().length;
   });
@@ -77,6 +108,16 @@ app.whenReady().then(() => {
       // "screen-saver" level keeps it above taskbars and most other OS windows
       mainWindow.setAlwaysOnTop(isTop, "screen-saver");
     }
+  });
+
+  ipcMain.on("set-fullscreen", (_, isFull: boolean) => {
+    if (mainWindow) {
+      mainWindow.setFullScreen(isFull);
+    }
+  });
+
+  ipcMain.on("quit-app", () => {
+    app.quit();
   });
 
   ipcMain.handle("get-network-info", () => {
@@ -104,7 +145,7 @@ app.whenReady().then(() => {
     };
   });
 
-  ipcMain.handle("get-running-banned-apps", async () => {
+  ipcMain.handle("get-running-banned-apps", async (_, bannedApps?: string[]) => {
     try {
       let command = "";
       if (process.platform === "win32") {
@@ -119,16 +160,78 @@ app.whenReady().then(() => {
       const { stdout } = await execAsync(command);
       const runningProcesses = stdout.toLowerCase();
       
-      // Match whole words to avoid false positives (e.g. edge.exe vs something_edge)
-      const detected = APP_BANNED.filter(appName => {
+      const appsToCheck = Array.isArray(bannedApps) ? bannedApps : [];
+      
+      if (appsToCheck.length === 0) {
+          return [];
+      }
+      
+      const detected = appsToCheck.filter(appName => {
         const lowerName = appName.toLowerCase();
         return runningProcesses.includes(lowerName);
       });
-      console.log("TEST - BANNED APPS DETECTED:", detected);
       return detected;
     } catch (e: any) {
       console.error("Lỗi lấy danh sách process:", e);
       return [`[LỖI HỆ THỐNG]: ${e.message || "Unknown Execute Error"}`]; 
+    }
+  });
+
+  ipcMain.handle("kill-banned-apps", async (_, appNames: string[]) => {
+    const killed: string[] = [];
+    const failed: string[] = [];
+    for (const appName of appNames) {
+      try {
+        let command = "";
+        if (process.platform === "win32") {
+        } else {
+          command = `pkill -f "${appName}" 2>/dev/null || true`;
+        }
+        await execAsync(command);
+        killed.push(appName);
+      } catch (e: any) {
+        if (e.code === 1) {
+          killed.push(appName); 
+        } else {
+          failed.push(appName);
+          console.error(`Failed to kill ${appName}:`, e);
+        }
+      }
+    }
+    return { killed, failed };
+  });
+
+  ipcMain.handle("log-system-metrics", async (_, payload: { examId: string, fps: number }) => {
+    try {
+      const logDir = path.join(app.getPath("desktop"), "exam_logs");
+      await fs.mkdir(logDir, { recursive: true });
+      
+      const metricsPath = path.join(logDir, `exam_${payload.examId}_METRICS.csv`);
+      
+      // Check if file exists to write header
+      try {
+        await fs.access(metricsPath);
+      } catch {
+        await fs.writeFile(metricsPath, "Time,FPS,Process_Type,CPU_Percent,WorkingSet_KB,PeakWorkingSet_KB\n", "utf8");
+      }
+      
+      const metrics = app.getAppMetrics();
+      const timeStr = new Date().toISOString();
+      let csvData = "";
+      
+      for (const m of metrics) {
+        // m.type = Browser (Main), Tab (Renderer), GPU, etc.
+        const cpu = m.cpu.percentCPUUsage.toFixed(2);
+        const mem = m.memory.workingSetSize;
+        const peakMem = m.memory.peakWorkingSetSize;
+        csvData += `${timeStr},${payload.fps},${m.type},${cpu},${mem},${peakMem}\n`;
+      }
+      
+      await fs.appendFile(metricsPath, csvData, "utf8");
+      return true;
+    } catch (e) {
+      console.error("Lỗi ghi system metrics:", e);
+      return false;
     }
   });
 

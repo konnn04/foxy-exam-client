@@ -1,7 +1,8 @@
+import { useMemo } from "react";
 import { toast } from "sonner";
 
 export function useToastCustom() {
-  return {
+  return useMemo(() => ({
     success: (message: string, description?: string) => {
       toast.success(message, { description });
     },
@@ -30,5 +31,5 @@ export function useToastCustom() {
     ) => {
       return toast.promise(promise, opts);
     },
-  };
+  }), []);
 }
