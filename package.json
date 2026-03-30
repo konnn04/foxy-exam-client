@@ -1,11 +1,11 @@
 {
-  "name": "exam-client",
+  "name": "foxy-exam-client",
   "private": true,
   "version": "0.1.0",
   "description": "Exam client desktop application",
   "author": {
-    "name": "Exam Client Team",
-    "email": "noreply@example.com"
+    "name": "Konnn04",
+    "email": "trieukon1011@gmail.com"
   },
   "type": "module",
   "main": "dist-electron/main.js",
@@ -49,7 +49,7 @@
         "AppImage",
         "deb"
       ],
-      "maintainer": "Exam Client Team <noreply@example.com>",
+      "maintainer": "Exam Client Team <trieukon1011@gmail.com>",
       "category": "Education"
     }
   },

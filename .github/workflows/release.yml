@@ -17,14 +17,12 @@ permissions:
 
 jobs:
   release:
-    if: ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')) && (matrix.os != 'macos-latest' || (github.event_name == 'workflow_dispatch' && inputs.include_macos == true)) }}
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:') }}
     name: Release (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
-        include:
-          - os: macos-latest
     
     steps:
       - name: Checkout Code
@@ -35,6 +33,49 @@ jobs:
         with:
           version: 9
           
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install
+
+      - name: Create .env from secret
+        shell: bash
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE }}
+        run: |
+          if [ -z "$ENV_FILE_CONTENT" ]; then
+            echo "Missing secret ENV_FILE. Add it in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          printf "%s" "$ENV_FILE_CONTENT" > .env
+
+      - name: Build Web and Electron Assets
+        run: pnpm run build
+
+      - name: Build and Publish Electron App
+        run: pnpm exec electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+  release_macos:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.include_macos == true }}
+    name: Release (macos-latest)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
