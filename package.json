@@ -32,7 +32,8 @@
       "target": [
         "dmg",
         "zip"
-      ]
+      ],
+      "artifactName": "${productName}.${ext}"
     },
     "win": {
       "target": [
@@ -42,7 +43,8 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "artifactName": "${productName}-Setup.${ext}"
     },
     "linux": {
       "target": [
@@ -50,7 +52,8 @@
         "deb"
       ],
       "maintainer": "Exam Client Team <trieukon1011@gmail.com>",
-      "category": "Education"
+      "category": "Education",
+      "artifactName": "${productName}.${ext}"
     }
   },
   "dependencies": {
