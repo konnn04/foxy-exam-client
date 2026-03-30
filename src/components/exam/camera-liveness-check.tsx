@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Loader2, CheckCircle, ShieldAlert, AlertTriangle, Mic } from "lucide-react";
-import { DEV_MODE } from "@/config/app";
+import { DEVELOPMENT_MODE } from "@/config/security.config";
 
 const FLASH_COLORS = ["#ff0000", "#00ff00", "#0000ff"]; 
 const FLASH_DURATION_MS = 300; 
@@ -71,7 +71,7 @@ export function CameraLivenessCheck({ stream, onSuccess, onFail, onCancel }: Cam
 
   const startCheck = useCallback(async () => {
     try {
-      if (!document.fullscreenElement && !DEV_MODE) {
+      if (!document.fullscreenElement && !DEVELOPMENT_MODE.ENABLED) {
         await document.documentElement.requestFullscreen().catch(() => {});
       }
     } catch (e) {}
@@ -295,7 +295,7 @@ export function CameraLivenessCheck({ stream, onSuccess, onFail, onCancel }: Cam
                       Hủy
                     </Button>
                   )}
-                  {DEV_MODE && (
+                  {DEVELOPMENT_MODE.ENABLED && (
                     <Button 
                       variant="outline" 
                       className="flex-1 border-dashed border-red-500 text-red-500 hover:bg-red-500 hover:text-white"
@@ -312,7 +312,7 @@ export function CameraLivenessCheck({ stream, onSuccess, onFail, onCancel }: Cam
                        Hủy
                      </Button>
                    )}
-                   {DEV_MODE && (
+                   {DEVELOPMENT_MODE.ENABLED && (
                      <Button 
                        variant="outline" 
                        className="flex-1 border-dashed border-red-500 text-red-500 hover:bg-red-500 hover:text-white"

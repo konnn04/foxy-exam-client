@@ -9,12 +9,14 @@ import ExamDetailPage from "@/pages/exam-detail";
 import ExamTakePage from "@/pages/exam-take";
 import ExamReviewPage from "@/pages/exam-review";
 import HistoryPage from "@/pages/history";
+import DisconnectedPage from "@/pages/disconnected";
 
 function App() {
   return (
     <Routes>
       {/* Public */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/disconnected" element={<DisconnectedPage />} />
 
       {/* Protected - Dashboard Layout */}
       <Route

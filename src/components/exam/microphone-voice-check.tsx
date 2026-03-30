@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Mic, Volume2, CheckCircle, Loader2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import { DEV_MODE } from "@/config/app";
+import { DEVELOPMENT_MODE } from "@/config/security.config";
 import { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { createFaceLandmarker } from "@/lib/mediapipe-service";
 
@@ -310,7 +310,7 @@ export function MicrophoneVoiceCheck({ stream, onSuccess, onCancel }: VoiceCheck
                 Hủy
               </Button>
             )}
-            {DEV_MODE && (
+            {DEVELOPMENT_MODE.ENABLED && (
               <Button 
                 variant="outline" 
                 className="flex-1 border-dashed border-red-500 text-red-500 hover:bg-red-500 hover:text-white"

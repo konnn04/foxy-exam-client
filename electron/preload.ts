@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getSystemInfo: () => ipcRenderer.invoke("get-system-info"),
   setAlwaysOnTop: (isTop: boolean) => ipcRenderer.send("set-always-on-top", isTop),
   setFullScreen: (isFull: boolean) => ipcRenderer.send("set-fullscreen", isFull),
+  quitApp: () => ipcRenderer.send("quit-app"),
   saveExamLog: (examId: string, violations: any[], tracking: any[]) => ipcRenderer.invoke("save-exam-log", { examId, violations, tracking }),
   logSystemMetrics: (examId: string, fps: number) => ipcRenderer.invoke("log-system-metrics", { examId, fps }),
   killBannedApps: (appNames: string[]) => ipcRenderer.invoke("kill-banned-apps", appNames),

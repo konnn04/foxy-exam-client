@@ -1,6 +1,5 @@
-import { examSocket } from './exam-socket';
-
-// ─── Types ──────────────────────────────────────────────────────────
+import { useExamSocketStore } from '@/hooks/use-exam-socket';
+import { STUN_SERVERS } from '@/config';
 interface WebRTCConfig {
   examId: number;
   localStream: MediaStream;
@@ -17,10 +16,7 @@ interface SignalData {
 
 // ─── STUN/TURN Configuration ────────────────────────────────────────
 const ICE_CONFIG: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ],
+  iceServers: STUN_SERVERS.map((url: string) => ({ urls: url })),
 };
 
 // ─── WebRTCService ──────────────────────────────────────────────────
@@ -91,7 +87,7 @@ class WebRTCService {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    await examSocket.sendSignal('offer', {
+    await useExamSocketStore.getState().sendSignal('offer', {
       sdp: pc.localDescription,
     }, remoteUserId);
   }
@@ -113,7 +109,7 @@ class WebRTCService {
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
-    await examSocket.sendSignal('answer', {
+    await useExamSocketStore.getState().sendSignal('answer', {
       sdp: pc.localDescription,
     }, fromUserId);
   }
@@ -155,7 +151,7 @@ class WebRTCService {
     // ICE candidate handling
     pc.onicecandidate = async (event) => {
       if (event.candidate) {
-        await examSocket.sendSignal('ice-candidate', {
+        await useExamSocketStore.getState().sendSignal('ice-candidate', {
           candidate: event.candidate,
         }, remoteUserId);
       }
@@ -230,7 +226,7 @@ class WebRTCService {
     }
 
     // Fallback: upload via REST API
-    await examSocket.uploadFaceCrop(imageBase64);
+    await useExamSocketStore.getState().uploadFaceCrop(imageBase64);
   }
 
   /**

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import api from "@/lib/api";
+import { authService } from "@/services/auth.service";
+import { STORAGE_KEYS } from "@/config";
 
 export interface User {
   id: number;
@@ -37,21 +38,12 @@ export const useUserStore = create<UserStore>()(
       login: async (email: string, password: string) => {
         set({ isLoading: true });
         try {
-          const res = await api.post("/oauth/token", {
-            grant_type: "password",
-            client_id: import.meta.env.VITE_OAUTH_CLIENT_ID,
-            client_secret: import.meta.env.VITE_OAUTH_CLIENT_SECRET,
-            username: email,
-            password: password,
-            scope: "*",
-          }, { baseURL: "http://localhost:8000" }); 
+          const res = await authService.login(email, password); 
           
           const token = res.data.access_token;
-          localStorage.setItem("auth_token", token);
+          localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, token);
           
-          const userRes = await api.get("/auth/me", {
-            headers: { Authorization: `Bearer ${token}` }
-          });
+          const userRes = await authService.fetchMe(token);
 
           set({
             token,
@@ -67,10 +59,10 @@ export const useUserStore = create<UserStore>()(
 
       logout: async () => {
         try {
-          await api.post("/auth/logout");
+          await authService.logout();
         } catch {
         } finally {
-          localStorage.removeItem("auth_token");
+          localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
           set({
             user: null,
             token: null,
@@ -84,7 +76,7 @@ export const useUserStore = create<UserStore>()(
         if (!token) return;
         set({ isLoading: true });
         try {
-          const res = await api.get("/auth/me");
+          const res = await authService.fetchMe();
           set({
             user: res.data.user ?? res.data,
             isAuthenticated: true,
@@ -97,22 +89,22 @@ export const useUserStore = create<UserStore>()(
             isAuthenticated: false,
             isLoading: false,
           });
-          localStorage.removeItem("auth_token");
+          localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
         }
       },
 
       setUser: (user) => set({ user, isAuthenticated: !!user }),
       setToken: (token) => {
         if (token) {
-          localStorage.setItem("auth_token", token);
+          localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, token);
         } else {
-          localStorage.removeItem("auth_token");
+          localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
         }
         set({ token });
       },
     }),
     {
-      name: "auth-store",
+      name: STORAGE_KEYS.AUTH_STORE,
       partialize: (state) => ({
         token: state.token,
         user: state.user,

@@ -2,14 +2,13 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import type { FaceLandmarker, FaceLandmarkerResult } from "@mediapipe/tasks-vision";
 import { createFaceLandmarker, extractPitchYaw } from "@/lib/mediapipe-service";
 import {
-  TARGET_INTERVAL_MS,
-  MAX_FACE_HEIGHT,
-  MAX_CENTER_OFFSET,
-  MONITOR_PITCH_THRESHOLD,
-  MONITOR_YAW_THRESHOLD,
-  NULL_FACE_THRESHOLD,
-  EYE_LOOK_THRESHOLD,
-} from "@/config/mediapipe-config";
+  FACE_BOUNDARIES,
+  MONITORING_THRESHOLDS,
+  EYE_CONTACT,
+  FACE_MONITOR_TIMING,
+} from "@/config";
+import api from "@/lib/api";
+import { useProctorStore } from "@/stores/use-proctor-store";
 
 export interface FaceStatus {
   isLooking: boolean;
@@ -27,7 +26,9 @@ export interface FaceStatus {
 export function useFaceMonitor(
   stream: MediaStream | null, 
   active: boolean,
-  onFrameRender?: (results: FaceLandmarkerResult | null) => void
+  onFrameRender?: (results: FaceLandmarkerResult | null) => void,
+  examId?: string,
+  verificationIntervalSeconds?: number
 ) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
@@ -38,7 +39,6 @@ export function useFaceMonitor(
   const eyeLookAwayStartTimeRef = useRef(0);
 
   const [isLoaded, setIsLoaded] = useState(false);
-  const [status, setStatus] = useState<FaceStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -88,10 +88,6 @@ export function useFaceMonitor(
     const video = videoRef.current;
 
     const now = performance.now();
-    if (now - lastProcessTimeRef.current < TARGET_INTERVAL_MS) {
-      requestRef.current = requestAnimationFrame(processFrame);
-      return;
-    }
     lastProcessTimeRef.current = now;
 
     if (video.videoWidth > 0 && video.currentTime !== lastVideoTimeRef.current) {
@@ -109,13 +105,12 @@ export function useFaceMonitor(
           if (pt.y > maxY) maxY = pt.y;
         }
 
-        const faceWidth = maxX - minX;
         const faceHeight = maxY - minY;
         const centerX = (minX + maxX) / 2;
         const centerY = (minY + maxY) / 2;
 
-        const isCentered = Math.abs(centerX - 0.5) <= MAX_CENTER_OFFSET && Math.abs(centerY - 0.5) <= MAX_CENTER_OFFSET;
-        const isGoodDistance = faceHeight <= MAX_FACE_HEIGHT;
+        const isCentered = Math.abs(centerX - 0.5) <= FACE_BOUNDARIES.MAX_CENTER_OFFSET && Math.abs(centerY - 0.5) <= FACE_BOUNDARIES.MAX_CENTER_OFFSET;
+        const isGoodDistance = faceHeight <= FACE_BOUNDARIES.MAX_HEIGHT;
 
         let isLooking = false;
         let pitchDeg = 0;
@@ -125,13 +120,12 @@ export function useFaceMonitor(
           const angles = extractPitchYaw(results.facialTransformationMatrixes[0].data);
           pitchDeg = angles.pitch;
           yawDeg = angles.yaw;
-          isLooking = Math.abs(pitchDeg) < MONITOR_PITCH_THRESHOLD && Math.abs(yawDeg) < MONITOR_YAW_THRESHOLD;
+          isLooking = Math.abs(pitchDeg) < MONITORING_THRESHOLDS.PITCH_THRESHOLD && Math.abs(yawDeg) < MONITORING_THRESHOLDS.YAW_THRESHOLD;
         }
 
         let eyeLookAway = false;
         if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
           const shapes = results.faceBlendshapes[0].categories;
-          
           
           let maxEyeDev = 0;
           for (const shape of shapes) {
@@ -140,12 +134,12 @@ export function useFaceMonitor(
             }
           }
           
-          const isDeviated = maxEyeDev > EYE_LOOK_THRESHOLD;
+          const isDeviated = maxEyeDev > EYE_CONTACT.LOOK_THRESHOLD;
           if (isDeviated) {
             if (eyeLookAwayStartTimeRef.current === 0) {
               eyeLookAwayStartTimeRef.current = now;
               eyeLookAway = false;
-            } else if (now - eyeLookAwayStartTimeRef.current < 500) {
+            } else if (now - eyeLookAwayStartTimeRef.current < FACE_MONITOR_TIMING.EYE_LOOKAWAY_DEBOUNCE_MS) {
               eyeLookAway = false;
             } else {
               eyeLookAway = true;
@@ -156,25 +150,32 @@ export function useFaceMonitor(
           }
         }
 
-        setStatus({
-          isLooking,
-          isCentered,
-          isGoodDistance,
-          pitch: pitchDeg,
-          yaw: yawDeg,
-          faceWidth,
-          faceHeight,
-          centerX,
-          centerY,
-          eyeLookAway
-        });
+        let newWarning = "";
+        if (!isGoodDistance) {
+          newWarning = "Bạn đang ở quá gần màn hình. Hãy ngồi xa ra một chút.";
+        } else if (!isCentered) {
+          newWarning = "Khuôn mặt của bạn đang lệch khỏi trung tâm camera.";
+        } else if (!isLooking) {
+          newWarning = "Vui lòng duy trì hướng nhìn thẳng vào bài thi.";
+        } else if (eyeLookAway) {
+          newWarning = "Mắt bạn đang nhìn lệch với bài thi quá nhiều.";
+        }
+
+        const currentWarning = useProctorStore.getState().monitorWarning;
+        if (currentWarning !== newWarning && useProctorStore.getState().faceAuthLockedMsg === "") {
+          useProctorStore.getState().setMonitorWarning(newWarning);
+        }
+
         nullFrameCounterRef.current = 0;
         if (onFrameRender) onFrameRender(results);
       } else {
         if (onFrameRender) onFrameRender(null);
         nullFrameCounterRef.current++;
-        if (nullFrameCounterRef.current >= NULL_FACE_THRESHOLD) {
-          setStatus(null);
+        if (nullFrameCounterRef.current >= MONITORING_THRESHOLDS.NULL_FACE_THRESHOLD) {
+          const currentWarning = useProctorStore.getState().monitorWarning;
+          if (currentWarning !== "Hệ thống không tìm thấy khuôn mặt của bạn." && useProctorStore.getState().faceAuthLockedMsg === "") {
+            useProctorStore.getState().setMonitorWarning("Hệ thống không tìm thấy khuôn mặt của bạn.");
+          }
         }
       }
     }
@@ -191,5 +192,80 @@ export function useFaceMonitor(
     };
   }, [isLoaded, active, processFrame]);
 
-  return { isLoaded, status, error };
+  // Periodic Face Verification (3-strike logic)
+  useEffect(() => {
+    if (!active || !examId || !verificationIntervalSeconds || verificationIntervalSeconds <= 0) return;
+
+    let isActive = true;
+    let timerId: ReturnType<typeof setTimeout>;
+    let failsCount = 0;
+    let currentlyLocked = false;
+
+    const runVerification = async () => {
+      if (!isActive || !videoRef.current) return;
+      const video = videoRef.current;
+      
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      
+      let isMatch = false;
+      let apiCalled = false;
+      
+      if (ctx && video.videoWidth > 0) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const base64Image = canvas.toDataURL("image/jpeg", 0.8);
+        const base64Data = base64Image.replace(/^data:image\/[a-z]+;base64,/, "");
+        const formData = new FormData();
+        formData.append("image", base64Data);
+        
+        try {
+          const res = await api.post(`/student/exams/${examId}/verify-identity`, formData);
+          isMatch = res.data.match === true;
+          apiCalled = true;
+        } catch (err) {
+          console.error("Periodic face verification error:", err);
+          isMatch = false;
+        }
+      }
+
+      if (!isActive) return;
+
+      if (isMatch) {
+         // Success
+         failsCount = 0;
+         if (currentlyLocked) {
+             currentlyLocked = false;
+             useProctorStore.getState().setFaceAuthLockedMsg("");
+         }
+         timerId = setTimeout(runVerification, verificationIntervalSeconds * 1000);
+      } else {
+         // Failure
+         if (apiCalled) {
+             failsCount++;
+         }
+         
+         if (failsCount >= 3 && !currentlyLocked) {
+             currentlyLocked = true;
+             useProctorStore.getState().setFaceAuthLockedMsg("Khuôn mặt không hợp lệ hoặc không có người. Vui lòng đưa đúng khuôn mặt vào camera.");
+             // Lock screen will log violation in the exam-take effect instead, or we can add it here.
+         }
+         
+         // Retry faster if failing or locked
+         const nextDelay = (failsCount > 0 || currentlyLocked) ? 2000 : (verificationIntervalSeconds * 1000);
+         timerId = setTimeout(runVerification, nextDelay);
+      }
+    };
+
+    // Initial start
+    timerId = setTimeout(runVerification, verificationIntervalSeconds * 1000);
+
+    return () => {
+      isActive = false;
+      clearTimeout(timerId);
+    };
+  }, [active, examId, verificationIntervalSeconds]);
+
+  return { isLoaded, error };
 }

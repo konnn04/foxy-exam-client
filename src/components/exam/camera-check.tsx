@@ -10,14 +10,15 @@ import {
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Video, VideoOff, CheckCircle, AlertTriangle, Mic } from "lucide-react";
-import { DEV_MODE } from "@/config/app";
+import { DEVELOPMENT_MODE } from "@/config/security.config";
 
 interface CameraCheckProps {
   onConfirm: (stream: MediaStream) => void;
   onSkip?: () => void;
+  clientConfig?: any;
 }
 
-export function CameraCheck({ onConfirm, onSkip }: CameraCheckProps) {
+export function CameraCheck({ onConfirm, onSkip, clientConfig }: CameraCheckProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
@@ -33,12 +34,12 @@ export function CameraCheck({ onConfirm, onSkip }: CameraCheckProps) {
     const initApp = async () => {
       try {
         // Use Electron's native fullscreen if available
-        if (window.electronAPI?.setFullScreen && !DEV_MODE) {
+        if (window.electronAPI?.setFullScreen && !DEVELOPMENT_MODE.ENABLED) {
           window.electronAPI.setFullScreen(true);
-        } else if (!document.fullscreenElement && !DEV_MODE) {
+        } else if (!document.fullscreenElement && !DEVELOPMENT_MODE.ENABLED) {
           await document.documentElement.requestFullscreen().catch(() => {});
         }
-        if (window.electronAPI?.setAlwaysOnTop && !DEV_MODE) {
+        if (window.electronAPI?.setAlwaysOnTop && !DEVELOPMENT_MODE.ENABLED) {
           window.electronAPI.setAlwaysOnTop(true);
         }
       } catch (e) {}
@@ -47,14 +48,14 @@ export function CameraCheck({ onConfirm, onSkip }: CameraCheckProps) {
 
     // Retry fullscreen on first user click if it wasn't acquired
     const retryFullscreen = async () => {
-      if (!document.fullscreenElement && !DEV_MODE) {
+      if (!document.fullscreenElement && !DEVELOPMENT_MODE.ENABLED) {
         try {
           await document.documentElement.requestFullscreen();
         } catch (e) {}
       }
       document.removeEventListener('click', retryFullscreen);
     };
-    if (!DEV_MODE) {
+    if (!DEVELOPMENT_MODE.ENABLED) {
       document.addEventListener('click', retryFullscreen, { once: true });
     }
 
@@ -95,11 +96,14 @@ export function CameraCheck({ onConfirm, onSkip }: CameraCheckProps) {
       setError(null);
 
       try {
+        const fps = clientConfig?.fps || 10;
+        const height = clientConfig?.height || 720;
+        
         const constraints: MediaStreamConstraints = {
           video: {
             deviceId: { exact: selectedVideoId },
-            width: { ideal: 640 },
-            height: { ideal: 480 },
+            height: { ideal: height, max: height },
+            frameRate: { ideal: fps, max: fps },
           },
           audio: selectedAudioId ? { deviceId: { exact: selectedAudioId } } : false,
         };
@@ -268,7 +272,7 @@ export function CameraCheck({ onConfirm, onSkip }: CameraCheckProps) {
                 Bỏ qua
               </Button>
             )}
-            {DEV_MODE && (
+            {DEVELOPMENT_MODE.ENABLED && (
               <Button 
                 variant="outline" 
                 className="flex-1 border-dashed border-red-500 text-red-500 hover:bg-red-500 hover:text-white"

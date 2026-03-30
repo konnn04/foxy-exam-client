@@ -20,14 +20,19 @@ export interface Answer {
 }
 
 export interface ExamTrackingConfig {
-  level: "none" | "standard" | "strict";
+  level: "none" | "standard" | "strict" | "custom";
   requireApp?: boolean;          // Bắt buộc dùng Electron App
+  requireScreenShare?: boolean;  // Yêu cầu share màn hình
+  noMultiMonitor?: boolean;      // Không cho dùng đa màn hình
   requireCamera?: boolean;       // Mở Camera kiểm tra tập trung
-  requireMic?: boolean;          // Ghi âm mic (Chưa chạy, lưu config)
+  monitorGaze?: boolean;         // Giám sát hướng nhìn (phụ thuộc cam)
+  requireMic?: boolean;          // Ghi âm mic
   requireFaceAuth?: boolean;     // Giám sát xác minh khuôn mặt
   detectBannedApps?: boolean;    // Bật quét phần mềm cấm
+  detectBannedObjects?: boolean; // Giám sát vật cấm (mockup)
   bannedApps?: string[];         // DS phần mềm cấm từ server
   bannedAppsExceptions?: string[]; // Các app cấm được ngoại lệ
+  face_verification_interval_seconds?: number;
 }
 
 export interface ExamData {

@@ -15,6 +15,7 @@ declare global {
       stopGlobalHook: () => void;
       setAlwaysOnTop: (isTop: boolean) => void;
       setFullScreen: (isFull: boolean) => void;
+      quitApp: () => void;
       onGlobalHookEvent: (callback: (event: any, data: any) => void) => void;
       offGlobalHookEvent: (callback: (event: any, data: any) => void) => void;
       onDevToolsOpened: (callback: () => void) => void;

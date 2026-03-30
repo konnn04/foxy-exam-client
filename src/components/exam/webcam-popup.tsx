@@ -4,7 +4,12 @@ import { Video, VideoOff, Minimize2, ScanFace } from "lucide-react";
 import type { FaceLandmarkerResult } from "@mediapipe/tasks-vision";
 import { DrawingUtils, FaceLandmarker } from "@mediapipe/tasks-vision";
 import { extractPitchYaw } from "@/lib/mediapipe-service";
-import { DEV_MODE } from "@/config/app";
+import {
+  DEVELOPMENT_MODE,
+  WEBCAM_POPUP_TIMING,
+  WEBCAM_POPUP_DIMENSIONS,
+} from "@/config";
+import { useExamSocketStore } from '@/hooks/use-exam-socket';
 
 export interface WebcamPopupHandle {
   drawFrame: (results: FaceLandmarkerResult | null) => void;
@@ -46,9 +51,12 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
     if (!dragging) return;
 
     const handleMouseMove = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      const cw = containerRef.current.offsetWidth;
+      const ch = containerRef.current.offsetHeight;
       setPosition({
-        x: Math.max(0, Math.min(window.innerWidth - 200, e.clientX - dragOffset.current.x)),
-        y: Math.max(0, Math.min(window.innerHeight - 160, e.clientY - dragOffset.current.y)),
+        x: Math.max(0, Math.min(window.innerWidth - cw, e.clientX - dragOffset.current.x)),
+        y: Math.max(0, Math.min(window.innerHeight - ch, e.clientY - dragOffset.current.y)),
       });
     };
 
@@ -82,9 +90,9 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
         maxY = Math.max(maxY, point.y);
       }
 
-      // Add padding (e.g., 20% around the face)
-      const paddingX = (maxX - minX) * 0.2;
-      const paddingY = (maxY - minY) * 0.2;
+      // Add generous padding (60% around the face) so face service can detect it
+      const paddingX = (maxX - minX) * 0.6;
+      const paddingY = (maxY - minY) * 0.6;
 
       minX = Math.max(0, minX - paddingX);
       minY = Math.max(0, minY - paddingY);
@@ -98,25 +106,36 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
 
       if (cropW <= 0 || cropH <= 0) return;
 
-      // Draw cropped face to offscreen canvas
+      // Draw cropped face to offscreen canvas (min 300px for quality)
+      const scale = Math.max(1, 300 / Math.min(cropW, cropH));
       const offCanvas = document.createElement("canvas");
-      offCanvas.width = cropW;
-      offCanvas.height = cropH;
+      offCanvas.width = Math.round(cropW * scale);
+      offCanvas.height = Math.round(cropH * scale);
       const offCtx = offCanvas.getContext("2d");
       if (!offCtx) return;
 
       offCtx.drawImage(
         video,
         cropX, cropY, cropW, cropH,
-        0, 0, cropW, cropH
+        0, 0, offCanvas.width, offCanvas.height
       );
 
       // Convert to Base64
       const base64Image = offCanvas.toDataURL("image/jpeg", 0.8);
-      console.log(`[MOCK FACE AUTH] Cropped face (W:${cropW.toFixed(0)}, H:${cropH.toFixed(0)}). Sending POST...`, base64Image.substring(0, 50) + '...');
-      // TODO: Replace with actual WEBRTC/API POST to server when ready
-      
-    }, 10000); // Trigger every 10 seconds
+      const base64Data = base64Image.replace(/^data:image\/[a-z]+;base64,/, "");
+      useExamSocketStore.getState().uploadFaceCrop(base64Data).then((match) => {
+        if (match === false) {
+          console.warn('[WebcamPopup] Face mismatch detected!');
+          // Log violation for the teacher to see
+          useExamSocketStore.getState().logEvent('face_verification_failed', {
+            message: 'Khuôn mặt không khớp với ảnh đăng ký',
+            match: false,
+          });
+        }
+      }).catch((err) => {
+        console.error("[WebcamPopup] Failed to upload face crop:", err);
+      });
+    }, WEBCAM_POPUP_TIMING.FACE_CROP_INTERVAL_MS); // Trigger periodically
 
     return () => clearInterval(interval);
   }, [stream]);
@@ -164,7 +183,7 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
         }
       }
 
-      if (devStatsRef.current && DEV_MODE) {
+      if (devStatsRef.current && DEVELOPMENT_MODE.ENABLED) {
          if (results?.faceLandmarks?.length) {
             devStatsRef.current.innerText = `P:${pitch.toFixed(0)}° Y:${yaw.toFixed(0)}° Eye:${eyeMax.toFixed(2)}`;
          } else {
@@ -179,12 +198,16 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
   return (
     <div
       ref={containerRef}
-      className="fixed z-50 rounded-xl overflow-hidden shadow-2xl border border-border bg-card"
+      className="fixed z-[1500] rounded-xl overflow-hidden shadow-2xl border border-border bg-card"
       style={{
         left: position.x,
         top: position.y,
-        width: minimized ? 60 : 240,
-        height: minimized ? 60 : 200,
+        width: minimized
+          ? WEBCAM_POPUP_DIMENSIONS.MINIMIZED.WIDTH_PX
+          : WEBCAM_POPUP_DIMENSIONS.NORMAL.WIDTH_PX,
+        height: minimized
+          ? WEBCAM_POPUP_DIMENSIONS.MINIMIZED.HEIGHT_PX
+          : WEBCAM_POPUP_DIMENSIONS.NORMAL.HEIGHT_PX,
         cursor: dragging ? "grabbing" : "grab",
         transition: dragging ? "none" : "width 0.2s, height 0.2s",
       }}
@@ -205,7 +228,7 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
             className="absolute inset-0 w-full h-full object-cover pointer-events-none"
             style={{ transform: "scaleX(-1)" }}
           />
-          {DEV_MODE && (
+           {DEVELOPMENT_MODE.ENABLED && (
              <div ref={devStatsRef} className="absolute top-1 left-1 bg-black/70 text-green-400 text-[10px] font-mono px-1 rounded pointer-events-none z-10" />
           )}
           <div className="absolute top-1 right-1 flex gap-1 z-10">

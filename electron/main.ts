@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from "electron";
+import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session } from "electron";
 import path from "path";
 import { fileURLToPath } from "url";
 import { exec } from "child_process";
@@ -68,6 +68,37 @@ app.on("activate", () => {
 
 
 app.whenReady().then(() => {
+  // Allow renderer getDisplayMedia() and show native source picker in Electron.
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+    if (permission === "display-capture" || permission === "media") {
+      return true;
+    }
+    return false;
+  });
+
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    if (permission === "display-capture" || permission === "media") {
+      callback(true);
+      return;
+    }
+    callback(false);
+  });
+
+  session.defaultSession.setDisplayMediaRequestHandler(
+    async (_request, callback) => {
+      // Fallback when system picker is unavailable: use first screen source.
+      const sources = await desktopCapturer.getSources({
+        types: ["screen"],
+        thumbnailSize: { width: 0, height: 0 },
+      });
+      callback({ video: sources[0], audio: "none" });
+    },
+    {
+      // Ask OS/Electron to show native picker dialog when available.
+      useSystemPicker: true,
+    }
+  );
+
   ipcMain.handle("get-screen-count", () => {
     return screen.getAllDisplays().length;
   });
@@ -83,6 +114,10 @@ app.whenReady().then(() => {
     if (mainWindow) {
       mainWindow.setFullScreen(isFull);
     }
+  });
+
+  ipcMain.on("quit-app", () => {
+    app.quit();
   });
 
   ipcMain.handle("get-network-info", () => {

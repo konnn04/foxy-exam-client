@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useToastCustom } from "./use-toast-custom";
 import { ExamTrackingConfig } from "@/types/exam";
-import { DEV_MODE, NO_LOCKSCREEN_WHEN_DEV_MODE } from "@/config/app";
+import {
+  DEVELOPMENT_MODE,
+  EXAM_LOCKDOWN,
+} from "@/config";
 
 interface UseExamLockdownProps {
   wizardPhase: number;
@@ -46,7 +49,7 @@ export function useExamLockdown({
 
   // Global Input Hooks (Keyboard, Mouse, Blur, Tab switch, etc.)
   useEffect(() => {
-    if (wizardPhase < 7) return;
+    if (wizardPhase < 5) return;
     const trackingLvl = config?.level || "strict";
     
     const handleVisibilityChange = () => {
@@ -80,7 +83,7 @@ export function useExamLockdown({
           if (lowerKey === "printscreen") {
             addViolation("screenshot", "Bạn đã cố chụp ảnh màn hình.");
           } else if (lowerKey === "f12") {
-            if (!DEV_MODE) {
+            if (!DEVELOPMENT_MODE.ENABLED) {
               addViolation("devtools", "Bạn đã cố mở Developer Tools.");
             }
           }
@@ -90,7 +93,7 @@ export function useExamLockdown({
       window.electronAPI.onGlobalHookEvent(handleGlobalHook);
       
       const handleDevToolsOpened = () => {
-        if (!DEV_MODE) {
+        if (!DEVELOPMENT_MODE.ENABLED) {
           addViolation("devtools", "Phát hiện mở Developer Tools.");
         }
       };
@@ -118,7 +121,7 @@ export function useExamLockdown({
         return;
       }
       if (e.ctrlKey || e.metaKey) {
-        const blockedKeys = ["c", "v", "a", "p", "s", "u", "shift"];
+        const blockedKeys = EXAM_LOCKDOWN.BLOCKED_KEY_COMBINATIONS;
         if (blockedKeys.includes(e.key.toLowerCase())) {
           e.preventDefault();
           addViolation("keyboard_shortcut", `Phím tắt bị cấm: ${e.ctrlKey ? "Ctrl" : "Cmd"}+${e.key.toUpperCase()}`);
@@ -126,14 +129,14 @@ export function useExamLockdown({
         }
       }
       if (e.key === "F11") {
-        if (!DEV_MODE) {
+        if (!DEVELOPMENT_MODE.ENABLED) {
           e.preventDefault();
         }
         addViolation("keyboard_shortcut", `Phím tắt bị cấm: ${e.key}`);
         return;
       }
       if (e.key === "F12") {
-        if (!DEV_MODE) {
+        if (!DEVELOPMENT_MODE.ENABLED) {
           e.preventDefault();
         }
       }
@@ -177,9 +180,9 @@ export function useExamLockdown({
 
   // Always On Top & Network Info
   useEffect(() => {
-    if (wizardPhase < 7) return;
+    if (wizardPhase < 5) return;
 
-    if (window.electronAPI?.setAlwaysOnTop && !DEV_MODE) {
+    if (window.electronAPI?.setAlwaysOnTop && !DEVELOPMENT_MODE.ENABLED) {
       window.electronAPI.setAlwaysOnTop(true);
     }
 
@@ -198,7 +201,7 @@ export function useExamLockdown({
 
   // Hardware Checks (Banned Apps, Multiple Screens, FPS)
   useEffect(() => {
-    if (wizardPhase < 7) return;
+    if (wizardPhase < 5) return;
     const trackingLvl = config?.level || "none";
     const shouldCheckBannedApps = config?.detectBannedApps === true || trackingLvl === "strict";
     
@@ -218,21 +221,37 @@ export function useExamLockdown({
             currentScreenCount = await window.electronAPI.getScreenCount();
             setScreenCount(currentScreenCount);
             if (currentScreenCount > 1) {
-              isLocked = true;
-              lockMsgs.push(`Phát hiện ${currentScreenCount} màn hình. Vui lòng ngắt kết nối màn hình phụ.`);
+              if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_MULTI_SCREEN) {
+                // Dev bypass: skip multi-screen lock
+                toast.error(`[Dev Bypass] Phát hiện ${currentScreenCount} màn hình (bypassed)`);
+              } else if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_DEV) {
+                toast.error(`[Dev Bypass] Phát hiện ${currentScreenCount} màn hình.`);
+              } else {
+                isLocked = true;
+                lockMsgs.push(`Phát hiện ${currentScreenCount} màn hình. Vui lòng chỉ sử dụng một màn hình duy nhất.`);
+              }
             }
           }
           if (window.electronAPI.getRunningBannedApps && shouldCheckBannedApps) {
-            const appsList = Array.isArray(config?.bannedApps) ? config.bannedApps : [];
-            if (appsList.length > 0) {
-              detectedApps = await window.electronAPI.getRunningBannedApps(appsList);
-              setBannedApps(detectedApps);
-              if (detectedApps.length > 0) {
-                isLocked = true;
-                lockMsgs.push(`Phát hiện phần mềm bị cấm: ${detectedApps.join(', ')}. Vui lòng tắt phần mềm.`);
-              }
-            } else {
+            if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_BANNED_APPS) {
+              // Dev bypass: skip banned app detection entirely
               setBannedApps([]);
+            } else {
+              const appsList = Array.isArray(config?.bannedApps) ? config.bannedApps : [];
+              if (appsList.length > 0) {
+                detectedApps = await window.electronAPI.getRunningBannedApps(appsList);
+                setBannedApps(detectedApps);
+                if (detectedApps.length > 0) {
+                  if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_DEV) {
+                    toast.error(`[Dev Bypass] Đang mở phần mềm bị cấm: ${detectedApps.join(', ')}`);
+                  } else {
+                    isLocked = true;
+                    lockMsgs.push(`Đang mở phần mềm bị cấm: ${detectedApps.join(', ')}. Vui lòng tắt các phần mềm này để tiếp tục.`);
+                  }
+                }
+              } else {
+                setBannedApps([]);
+              }
             }
           }
         } catch (e) {
@@ -283,25 +302,31 @@ export function useExamLockdown({
   }, [wizardPhase, config, addViolation, examId, setIsBlurred, setBlurReason]);
 
   useEffect(() => {
-    if (wizardPhase < 7) return;
+    if (wizardPhase < 5) return;
     const trackingLvl = config?.level || "strict";
 
     const requestFullscreen = async () => {
       if (trackingLvl === "none") return;
+      if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_FULLSCREEN) return;
       try {
-        await document.documentElement.requestFullscreen();
+        if (window.electronAPI?.setFullScreen) {
+          window.electronAPI.setFullScreen(true);
+        } else if (!document.fullscreenElement) {
+          await document.documentElement.requestFullscreen();
+        }
       } catch {
       }
     };
     requestFullscreen();
 
     const handleFullscreenChange = () => {
-      if (!document.fullscreenElement && wizardPhase >= 7 && !submitting) {
+      if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_FULLSCREEN) return;
+      if (!document.fullscreenElement && wizardPhase >= 5 && !submitting) {
         if (trackingLvl !== "none") {
           const blurReasonFullscreen = "Chế độ xem toàn màn hình đã bị tắt.";
           addViolation("exit_fullscreen", blurReasonFullscreen);
           
-          if (DEV_MODE && NO_LOCKSCREEN_WHEN_DEV_MODE) {
+          if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_DEV) {
             toast.error(`[Dev Bypass] ${blurReasonFullscreen}`);
           } else {
             setIsBlurred(true);

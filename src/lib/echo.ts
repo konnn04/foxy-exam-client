@@ -1,7 +1,11 @@
 import Echo from 'laravel-echo';
 import Pusher from 'pusher-js';
+import {
+  WEBSOCKET_CONFIG,
+  API_CONFIG,
+  STORAGE_KEYS,
+} from '@/config';
 
-// Make Pusher globally available for Laravel Echo
 (window as any).Pusher = Pusher;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -15,17 +19,22 @@ let echoInstance: any = null;
 export function getEcho(): any {
   if (echoInstance) return echoInstance;
 
-  const token = localStorage.getItem('auth_token');
+  const token = localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+
+  const isTLS = WEBSOCKET_CONFIG.FORCE_TLS;
+  const port = parseInt(String(WEBSOCKET_CONFIG.PORT));
 
   echoInstance = new Echo({
-    broadcaster: 'reverb',
-    key: import.meta.env.VITE_REVERB_APP_KEY || 'exam-key-local',
-    wsHost: import.meta.env.VITE_REVERB_HOST || window.location.hostname || 'localhost',
-    wsPort: parseInt(import.meta.env.VITE_REVERB_PORT || '8080'),
-    wssPort: parseInt(import.meta.env.VITE_REVERB_PORT || '8080'),
-    forceTLS: import.meta.env.VITE_REVERB_SCHEME === 'https',
-    enabledTransports: ['ws', 'wss'],
-    authEndpoint: import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/broadcasting/auth` : 'http://localhost:8000/broadcasting/auth',
+    broadcaster: WEBSOCKET_CONFIG.BROADCASTER,
+    key: WEBSOCKET_CONFIG.APP_KEY,
+    wsHost: WEBSOCKET_CONFIG.HOST || window.location.hostname,
+    wsPort: isTLS ? undefined : port,
+    wssPort: isTLS ? port : undefined,
+    forceTLS: isTLS,
+    enableStats: false,
+    cluster: 'mt1',
+    enabledTransports: ['ws', 'xhr_streaming', 'xhr_polling'],
+    authEndpoint: API_CONFIG.BROADCASTING_AUTH_URL,
     auth: {
       headers: {
         Authorization: `Bearer ${token}`,
