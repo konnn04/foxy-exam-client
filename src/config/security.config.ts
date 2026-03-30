@@ -3,29 +3,33 @@
  * Centralized security settings, lockdown rules, and exam integrity rules
  */
 
+import { PRODUCTION } from "./env.config";
+
+const DEV_FEATURES_ALLOWED = !PRODUCTION;
+
 // Development mode settings
 export const DEVELOPMENT_MODE = {
   // Enable development mode features
-  ENABLED: true,
+  ENABLED: DEV_FEATURES_ALLOWED && true,
 
   // Disable exam lockscreen in development (violations still logged but no overlay)
-  NO_LOCKSCREEN_WHEN_DEV: false,
+  NO_LOCKSCREEN_WHEN_DEV: DEV_FEATURES_ALLOWED && false,
 
   // ────── Dev Bypass ──────
   // Skip multi-screen detection (allows testing with multiple monitors)
-  BYPASS_MULTI_SCREEN: true,
+  BYPASS_MULTI_SCREEN: DEV_FEATURES_ALLOWED && true,
 
   // Skip banned app detection (allows testing with dev tools, editors open)
-  BYPASS_BANNED_APPS: true,
+  BYPASS_BANNED_APPS: DEV_FEATURES_ALLOWED && true,
 
   // Skip fullscreen requirement
-  BYPASS_FULLSCREEN: false,
+  BYPASS_FULLSCREEN: DEV_FEATURES_ALLOWED && false,
 
   // Skip face verification during exam (periodic re-verification)
-  BYPASS_FACE_VERIFICATION: false,
+  BYPASS_FACE_VERIFICATION: DEV_FEATURES_ALLOWED && false,
 
   // Skip environment check (Electron API checks)
-  BYPASS_ENVIRONMENT_CHECK: false,
+  BYPASS_ENVIRONMENT_CHECK: DEV_FEATURES_ALLOWED && false,
 };
 
 export const NO_LOCKSCREEN_WHEN_DEV_MODE = DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_DEV;

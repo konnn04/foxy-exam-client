@@ -255,12 +255,6 @@ export function CameraOrientationCheck({ stream, onSuccess, onCancel }: CameraOr
     if (livenessStartedRef.current) return;
     livenessStartedRef.current = true;
 
-    try {
-      if (!document.fullscreenElement && !DEVELOPMENT_MODE.ENABLED) {
-        await document.documentElement.requestFullscreen().catch(() => {});
-      }
-    } catch (e) {}
-
     if (unmountedRef.current) return;
     setResultMsg("Đang chuẩn bị kiểm tra ánh sáng...");
     await new Promise(r => setTimeout(r, 1500));
