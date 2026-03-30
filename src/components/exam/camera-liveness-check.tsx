@@ -70,12 +70,6 @@ export function CameraLivenessCheck({ stream, onSuccess, onFail, onCancel }: Cam
   }, []);
 
   const startCheck = useCallback(async () => {
-    try {
-      if (!document.fullscreenElement && !DEVELOPMENT_MODE.ENABLED) {
-        await document.documentElement.requestFullscreen().catch(() => {});
-      }
-    } catch (e) {}
-
     setPhase("prep");
     for (let i = 3; i > 0; i--) {
       setResultMsg(`Chuẩn bị trong ${i} giây...`);

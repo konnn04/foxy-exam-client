@@ -31,34 +31,6 @@ export function CameraCheck({ onConfirm, onSkip, clientConfig }: CameraCheckProp
   const rafRef = useRef<number>(0);
 
   useEffect(() => {
-    const initApp = async () => {
-      try {
-        // Use Electron's native fullscreen if available
-        if (window.electronAPI?.setFullScreen && !DEVELOPMENT_MODE.ENABLED) {
-          window.electronAPI.setFullScreen(true);
-        } else if (!document.fullscreenElement && !DEVELOPMENT_MODE.ENABLED) {
-          await document.documentElement.requestFullscreen().catch(() => {});
-        }
-        if (window.electronAPI?.setAlwaysOnTop && !DEVELOPMENT_MODE.ENABLED) {
-          window.electronAPI.setAlwaysOnTop(true);
-        }
-      } catch (e) {}
-    };
-    initApp();
-
-    // Retry fullscreen on first user click if it wasn't acquired
-    const retryFullscreen = async () => {
-      if (!document.fullscreenElement && !DEVELOPMENT_MODE.ENABLED) {
-        try {
-          await document.documentElement.requestFullscreen();
-        } catch (e) {}
-      }
-      document.removeEventListener('click', retryFullscreen);
-    };
-    if (!DEVELOPMENT_MODE.ENABLED) {
-      document.addEventListener('click', retryFullscreen, { once: true });
-    }
-
     (async () => {
       try {
         const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -79,7 +51,6 @@ export function CameraCheck({ onConfirm, onSkip, clientConfig }: CameraCheckProp
     })();
 
     return () => {
-      document.removeEventListener('click', retryFullscreen);
     };
   }, []);
 

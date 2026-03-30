@@ -2,12 +2,20 @@
   "name": "exam-client",
   "private": true,
   "version": "0.1.0",
+  "description": "Exam client desktop application",
+  "author": {
+    "name": "Exam Client Team",
+    "email": "noreply@example.com"
+  },
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "build:electron": "tsc && vite build && electron-builder",
+    "release:local": "pnpm run build && electron-builder --publish never",
+    "release:linux": "pnpm run build && electron-builder --linux --publish never",
+    "release:win": "pnpm run build && electron-builder --win --publish never",
     "preview": "vite preview"
   },
   "build": {
@@ -41,6 +49,7 @@
         "AppImage",
         "deb"
       ],
+      "maintainer": "Exam Client Team <noreply@example.com>",
       "category": "Education"
     }
   },
