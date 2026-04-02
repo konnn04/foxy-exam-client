@@ -7,7 +7,7 @@ export const createMainWindow = () => {
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    icon: path.join(ELECTRON_RUNTIME.publicPath, "vite.svg"),
+    icon: path.join(ELECTRON_RUNTIME.publicPath, "assets/icons/icon.png"),
     webPreferences: {
       preload: path.join(ELECTRON_RUNTIME.dirname, "preload.mjs"),
       nodeIntegration: false,

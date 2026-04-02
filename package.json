@@ -28,12 +28,14 @@
       "dist",
       "dist-electron"
     ],
+    "icon": "public/assets/icons/icon.png",
     "mac": {
       "target": [
         "dmg",
         "zip"
       ],
-      "artifactName": "${productName}.${ext}"
+      "artifactName": "${productName}.${ext}",
+      "icon": "public/assets/icons/icon.icns"
     },
     "win": {
       "target": [
@@ -44,7 +46,8 @@
           ]
         }
       ],
-      "artifactName": "${productName}-Setup.${ext}"
+      "artifactName": "${productName}-Setup.${ext}",
+      "icon": "public/assets/icons/icon.ico"
     },
     "linux": {
       "target": [
@@ -53,7 +56,15 @@
       ],
       "maintainer": "Foxy Exam <trieukon1011@gmail.com>",
       "category": "Education",
-      "artifactName": "${productName}.${ext}"
+      "artifactName": "${productName}.${ext}",
+      "icon": "public/assets/icons/icon.png"
+    },
+    "nsis": {
+      "installerIcon": "public/assets/icons/icon.ico",
+      "uninstallerIcon": "public/assets/icons/icon.ico"
+    },
+    "deb": {
+      "icon": "public/assets/icons/icon.png"
     }
   },
   "dependencies": {
