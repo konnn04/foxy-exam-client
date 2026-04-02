@@ -4,13 +4,22 @@ export interface Option {
   content: string;
 }
 
+export interface GroupPassage {
+  content: string;
+  image_url?: string | null;
+}
+
 export interface Question {
   id: number;
   content: string;
-  type: string; 
+  type: string;
   options?: Option[];
   answers?: Option[];
   image_url?: string;
+  points?: number;
+  weight?: number;
+  /** Reading / group stem when this leaf belongs to a GROUP_QUESTION */
+  group_passage?: GroupPassage | null;
 }
 
 export interface Answer {
@@ -21,18 +30,20 @@ export interface Answer {
 
 export interface ExamTrackingConfig {
   level: "none" | "standard" | "strict" | "custom";
-  requireApp?: boolean;          // Bắt buộc dùng Electron App
-  requireScreenShare?: boolean;  // Yêu cầu share màn hình
-  noMultiMonitor?: boolean;      // Không cho dùng đa màn hình
-  requireCamera?: boolean;       // Mở Camera kiểm tra tập trung
-  monitorGaze?: boolean;         // Giám sát hướng nhìn (phụ thuộc cam)
-  requireMic?: boolean;          // Ghi âm mic
-  requireFaceAuth?: boolean;     // Giám sát xác minh khuôn mặt
-  detectBannedApps?: boolean;    // Bật quét phần mềm cấm
-  detectBannedObjects?: boolean; // Giám sát vật cấm (mockup)
-  bannedApps?: string[];         // DS phần mềm cấm từ server
-  bannedAppsExceptions?: string[]; // Các app cấm được ngoại lệ
+  requireApp?: boolean;
+  requireScreenShare?: boolean;
+  noMultiMonitor?: boolean;
+  requireCamera?: boolean;
+  monitorGaze?: boolean;
+  requireMic?: boolean;
+  requireFaceAuth?: boolean;
+  detectBannedApps?: boolean;
+  detectBannedObjects?: boolean;
+  bannedApps?: string[];
+  bannedAppsExceptions?: string[];
   face_verification_interval_seconds?: number;
+  lockDevice?: boolean;
+  device_lock_secret?: string;
 }
 
 export interface ExamData {
@@ -65,4 +76,6 @@ export interface Violation {
   type: string;
   timestamp: number;
   message: string;
+  /** Set when row came from Laravel broadcast — do not POST again to /proctor/violations */
+  fromServer?: boolean;
 }

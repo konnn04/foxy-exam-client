@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useForm } from "react-hook-form";
+import { useTranslation } from "react-i18next";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod/v4";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ const loginSchema = z.object({
 type LoginForm = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const { login } = useUser();
@@ -35,45 +37,36 @@ export default function LoginPage() {
 
   const form = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
-    defaultValues: {
-      email: "",
-      password: "",
-    },
+    defaultValues: { email: "", password: "" },
   });
 
   const onSubmit = async (data: LoginForm) => {
     try {
       await login(data.email, data.password);
-      toast.success("Đăng nhập thành công!");
+      toast.success(t("login.success"));
       const from = (location.state as { from?: { pathname: string } })?.from?.pathname || "/dashboard";
       navigate(from, { replace: true });
     } catch (error: unknown) {
       const err = error as { response?: { data?: { message?: string } } };
-      toast.error(
-        "Đăng nhập thất bại",
-        err?.response?.data?.message || "Email hoặc mật khẩu không đúng"
-      );
+      toast.error(t("login.failed"), err?.response?.data?.message || t("login.invalidCredentials"));
     }
   };
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
-      {}
       <div className="flex items-center justify-center p-6 md:p-10">
         <div className="mx-auto w-full max-w-[420px] space-y-6">
           <div className="flex items-center gap-2 mb-2">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <GraduationCap className="h-6 w-6" />
             </div>
-            <span className="text-xl font-bold">Exam System</span>
+            <span className="text-xl font-bold">{t("brand.name")}</span>
           </div>
 
           <Card className="border-0 shadow-none bg-transparent">
             <CardHeader className="px-0">
-              <CardTitle className="text-2xl font-bold">Đăng nhập</CardTitle>
-              <CardDescription>
-                Nhập thông tin tài khoản để truy cập hệ thống thi cử
-              </CardDescription>
+              <CardTitle className="text-2xl font-bold">{t("login.title")}</CardTitle>
+              <CardDescription>{t("login.subtitle")}</CardDescription>
             </CardHeader>
             <CardContent className="px-0">
               <Form {...form}>
@@ -83,11 +76,11 @@ export default function LoginPage() {
                     name="email"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Email</FormLabel>
+                        <FormLabel>{t("login.email")}</FormLabel>
                         <FormControl>
                           <Input
                             type="email"
-                            placeholder="student@example.com"
+                            placeholder={t("login.emailPlaceholder")}
                             autoComplete="email"
                             {...field}
                           />
@@ -101,12 +94,12 @@ export default function LoginPage() {
                     name="password"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Mật khẩu</FormLabel>
+                        <FormLabel>{t("login.password")}</FormLabel>
                         <FormControl>
                           <div className="relative">
                             <Input
                               type={showPassword ? "text" : "password"}
-                              placeholder="••••••••"
+                              placeholder={t("login.passwordPlaceholder")}
                               autoComplete="current-password"
                               {...field}
                             />
@@ -129,18 +122,14 @@ export default function LoginPage() {
                       </FormItem>
                     )}
                   />
-                  <Button
-                    type="submit"
-                    className="w-full"
-                    disabled={form.formState.isSubmitting}
-                  >
+                  <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
                     {form.formState.isSubmitting ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Đang đăng nhập...
+                        {t("login.loggingIn")}
                       </>
                     ) : (
-                      "Đăng nhập"
+                      t("login.loginButton")
                     )}
                   </Button>
                 </form>
@@ -149,12 +138,11 @@ export default function LoginPage() {
           </Card>
 
           <p className="text-center text-xs text-muted-foreground">
-            Hệ thống giám sát thi cử trực tuyến
+            {t("brand.name")} — {t("brand.tagline")}
           </p>
         </div>
       </div>
 
-      {}
       <div className="relative hidden lg:block">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-primary/5 to-background" />
         <div className="relative flex h-full flex-col items-center justify-center p-10">
@@ -164,13 +152,8 @@ export default function LoginPage() {
             className="max-w-md w-full rounded-2xl shadow-2xl"
           />
           <div className="mt-8 max-w-md text-center">
-            <h2 className="text-2xl font-bold mb-2">
-              Hệ thống giám sát thi cử
-            </h2>
-            <p className="text-muted-foreground">
-              Nền tảng thi trực tuyến an toàn, bảo mật với công nghệ giám sát
-              thông minh bằng AI.
-            </p>
+            <h2 className="text-2xl font-bold mb-2">{t("brand.name")}</h2>
+            <p className="text-muted-foreground">{t("brand.loginTagline")}</p>
           </div>
         </div>
       </div>

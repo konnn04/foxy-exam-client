@@ -6,9 +6,12 @@ import {
   MONITORING_THRESHOLDS,
   EYE_CONTACT,
   FACE_MONITOR_TIMING,
+  MOUTH_DETECTION,
+  FACE_EVENT_LOG,
 } from "@/config";
 import api from "@/lib/api";
 import { useProctorStore } from "@/stores/use-proctor-store";
+import { useExamSocketStore } from "@/hooks/use-exam-socket";
 
 export interface FaceStatus {
   isLooking: boolean;
@@ -28,7 +31,8 @@ export function useFaceMonitor(
   active: boolean,
   onFrameRender?: (results: FaceLandmarkerResult | null) => void,
   examId?: string,
-  verificationIntervalSeconds?: number
+  attemptId?: string,
+  enableFaceCrop?: boolean,
 ) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
@@ -37,6 +41,14 @@ export function useFaceMonitor(
   const nullFrameCounterRef = useRef(0);
   const lastProcessTimeRef = useRef(0);
   const eyeLookAwayStartTimeRef = useRef(0);
+
+  // Mouth movement (talking) detection refs
+  const mouthOpenHistoryRef = useRef<number[]>([]);
+  const mouthTalkingStartRef = useRef(0);
+  const lastMouthLogRef = useRef(0);
+
+  // Face event logging cooldown refs (prevent spamming)
+  const lastFaceEventLogRef = useRef<Record<string, number>>({});
 
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -150,6 +162,63 @@ export function useFaceMonitor(
           }
         }
 
+        // ─── Mouth movement / talking detection ─────────────────────
+        let mouthTalking = false;
+        if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+          const shapes = results.faceBlendshapes[0].categories;
+          let jawOpen = 0;
+          for (const shape of shapes) {
+            if (shape.categoryName === "jawOpen") { jawOpen = shape.score; break; }
+          }
+
+          const history = mouthOpenHistoryRef.current;
+          history.push(jawOpen);
+          if (history.length > MOUTH_DETECTION.HISTORY_FRAMES) history.shift();
+
+          if (jawOpen > MOUTH_DETECTION.JAW_OPEN_THRESHOLD && history.length >= 5) {
+            const mean = history.reduce((a, b) => a + b, 0) / history.length;
+            const variance = history.reduce((a, b) => a + (b - mean) ** 2, 0) / history.length;
+
+            if (variance > MOUTH_DETECTION.VARIANCE_THRESHOLD) {
+              if (mouthTalkingStartRef.current === 0) {
+                mouthTalkingStartRef.current = now;
+              } else if (now - mouthTalkingStartRef.current > MOUTH_DETECTION.SUSTAINED_MS) {
+                mouthTalking = true;
+                if (now - lastMouthLogRef.current > MOUTH_DETECTION.LOG_COOLDOWN_MS) {
+                  lastMouthLogRef.current = now;
+                  useExamSocketStore.getState().logEvent("mouth_movement_detected", {
+                    jawOpen: +jawOpen.toFixed(3),
+                    variance: +variance.toFixed(5),
+                    localTime: new Date().toISOString(),
+                  });
+                }
+              }
+            } else {
+              mouthTalkingStartRef.current = 0;
+            }
+          } else {
+            mouthTalkingStartRef.current = 0;
+          }
+        }
+
+        // ─── Log face monitoring events with cooldown ─────────────
+        const logFaceEvent = (eventType: string, data?: Record<string, any>) => {
+          const last = lastFaceEventLogRef.current[eventType] ?? 0;
+          if (now - last > FACE_EVENT_LOG.COOLDOWN_MS) {
+            lastFaceEventLogRef.current[eventType] = now;
+            useExamSocketStore.getState().logEvent(eventType, {
+              ...data,
+              localTime: new Date().toISOString(),
+            });
+          }
+        };
+
+        if (!isGoodDistance) logFaceEvent("face_too_close", { faceHeight });
+        if (!isCentered) logFaceEvent("face_not_centered", { centerX, centerY });
+        if (!isLooking) logFaceEvent("face_not_looking", { pitch: pitchDeg, yaw: yawDeg });
+        if (eyeLookAway) logFaceEvent("eye_look_away");
+        if (mouthTalking) logFaceEvent("talking_detected", { method: "mouth_visual" });
+
         let newWarning = "";
         if (!isGoodDistance) {
           newWarning = "Bạn đang ở quá gần màn hình. Hãy ngồi xa ra một chút.";
@@ -159,6 +228,8 @@ export function useFaceMonitor(
           newWarning = "Vui lòng duy trì hướng nhìn thẳng vào bài thi.";
         } else if (eyeLookAway) {
           newWarning = "Mắt bạn đang nhìn lệch với bài thi quá nhiều.";
+        } else if (mouthTalking) {
+          newWarning = "Hệ thống phát hiện bạn đang nói chuyện.";
         }
 
         const currentWarning = useProctorStore.getState().monitorWarning;
@@ -175,6 +246,15 @@ export function useFaceMonitor(
           const currentWarning = useProctorStore.getState().monitorWarning;
           if (currentWarning !== "Hệ thống không tìm thấy khuôn mặt của bạn." && useProctorStore.getState().faceAuthLockedMsg === "") {
             useProctorStore.getState().setMonitorWarning("Hệ thống không tìm thấy khuôn mặt của bạn.");
+
+            const last = lastFaceEventLogRef.current["face_not_found"] ?? 0;
+            if (now - last > FACE_EVENT_LOG.COOLDOWN_MS) {
+              lastFaceEventLogRef.current["face_not_found"] = now;
+              useExamSocketStore.getState().logEvent("face_not_found", {
+                nullFrames: nullFrameCounterRef.current,
+                localTime: new Date().toISOString(),
+              });
+            }
           }
         }
       }
@@ -192,80 +272,65 @@ export function useFaceMonitor(
     };
   }, [isLoaded, active, processFrame]);
 
-  // Periodic Face Verification (3-strike logic)
+  // Periodic face crop upload for server-side verification.
+  // Server verifies async and sends lock/unlock via WebSocket (FaceLockEvent).
   useEffect(() => {
-    if (!active || !examId || !verificationIntervalSeconds || verificationIntervalSeconds <= 0) return;
+    if (!active || !examId || !attemptId || !enableFaceCrop) return;
 
     let isActive = true;
     let timerId: ReturnType<typeof setTimeout>;
-    let failsCount = 0;
-    let currentlyLocked = false;
 
-    const runVerification = async () => {
-      if (!isActive || !videoRef.current) return;
+    const captureAndUpload = async () => {
+      if (!isActive || !videoRef.current) {
+        timerId = setTimeout(captureAndUpload, 3000 + Math.random() * 2000);
+        return;
+      }
+
       const video = videoRef.current;
-      
+      if (video.videoWidth === 0) {
+        timerId = setTimeout(captureAndUpload, 2000);
+        return;
+      }
+
       const canvas = document.createElement("canvas");
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext("2d");
-      
-      let isMatch = false;
-      let apiCalled = false;
-      
-      if (ctx && video.videoWidth > 0) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const base64Image = canvas.toDataURL("image/jpeg", 0.8);
-        const base64Data = base64Image.replace(/^data:image\/[a-z]+;base64,/, "");
-        const formData = new FormData();
-        formData.append("image", base64Data);
-        
-        try {
-          const res = await api.post(`/student/exams/${examId}/verify-identity`, formData);
-          isMatch = res.data.match === true;
-          apiCalled = true;
-        } catch (err) {
-          console.error("Periodic face verification error:", err);
-          isMatch = false;
-        }
+
+      if (!ctx) {
+        timerId = setTimeout(captureAndUpload, 3000 + Math.random() * 2000);
+        return;
       }
 
-      if (!isActive) return;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const base64Image = canvas.toDataURL("image/jpeg", 0.7);
 
-      if (isMatch) {
-         // Success
-         failsCount = 0;
-         if (currentlyLocked) {
-             currentlyLocked = false;
-             useProctorStore.getState().setFaceAuthLockedMsg("");
-         }
-         timerId = setTimeout(runVerification, verificationIntervalSeconds * 1000);
-      } else {
-         // Failure
-         if (apiCalled) {
-             failsCount++;
-         }
-         
-         if (failsCount >= 3 && !currentlyLocked) {
-             currentlyLocked = true;
-             useProctorStore.getState().setFaceAuthLockedMsg("Khuôn mặt không hợp lệ hoặc không có người. Vui lòng đưa đúng khuôn mặt vào camera.");
-             // Lock screen will log violation in the exam-take effect instead, or we can add it here.
-         }
-         
-         // Retry faster if failing or locked
-         const nextDelay = (failsCount > 0 || currentlyLocked) ? 2000 : (verificationIntervalSeconds * 1000);
-         timerId = setTimeout(runVerification, nextDelay);
+      let nextMs = 3000 + Math.random() * 2000;
+
+      try {
+        const res = await api.post(`/student/exams/${examId}/monitor/face-crop`, {
+          attempt_id: attemptId,
+          image: base64Image,
+        });
+        if (res.data?.next_interval_ms) {
+          nextMs = res.data.next_interval_ms;
+        }
+      } catch {
+        nextMs = 5000;
+      }
+
+      if (isActive) {
+        timerId = setTimeout(captureAndUpload, nextMs);
       }
     };
 
-    // Initial start
-    timerId = setTimeout(runVerification, verificationIntervalSeconds * 1000);
+    timerId = setTimeout(captureAndUpload, 3000 + Math.random() * 2000);
 
     return () => {
       isActive = false;
       clearTimeout(timerId);
     };
-  }, [active, examId, verificationIntervalSeconds]);
+  }, [active, examId, attemptId, enableFaceCrop]);
 
   return { isLoaded, error };
 }

@@ -1,27 +1,87 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { ATTACH_CLIENT_VIOLATION_SNAPSHOTS } from "@/config/security.config";
+import { livekitPublisher } from "@/lib/livekit-publisher";
 import { proctorService } from "@/services/proctor.service";
 
 interface EvidenceRecorderOptions {
   examId: string;
   attemptId: string;
   enabled: boolean;
+  cameraStream?: MediaStream | null;
+  screenStream?: MediaStream | null;
+  /** Override global ATTACH_CLIENT_VIOLATION_SNAPSHOTS when set */
+  attachSnapshots?: boolean;
+}
+
+function captureFromVideo(video: HTMLVideoElement | null): string | null {
+  if (!video || video.videoWidth === 0) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.drawImage(video, 0, 0);
+  return canvas.toDataURL("image/jpeg", 0.7);
 }
 
 /**
- * Lightweight violation reporter (V4 - Full Server-Side Evidence)
- * 
- * Architecture (2026-03 v4):
- * - Zero-Trust Client: Client only reports that a violation occurred.
- * - NO Canvas rendering, NO snapshots taken on client side.
- * - Server handles all evidence gathering (instant TrackEgress snapshots + video queue).
+ * Violation reporter: optional client-side snapshots only when ATTACH_CLIENT_VIOLATION_SNAPSHOTS is true.
+ * Otherwise POST metadata only; exam-sys + supervisor-agent attach cam/screen from LiveKit.
  */
 export function useEvidenceRecorder(options: EvidenceRecorderOptions) {
-  const { examId, attemptId, enabled } = options;
+  const { examId, attemptId, enabled, cameraStream, screenStream, attachSnapshots } = options;
+  const wantSnapshots = attachSnapshots ?? ATTACH_CLIENT_VIOLATION_SNAPSHOTS;
 
   const queueRef = useRef<Array<{ type: string; message: string; metadata?: Record<string, unknown> }>>([]);
   const processingRef = useRef(false);
 
-  /** Process the violation queue one-by-one */
+  const camVideoRef = useRef<HTMLVideoElement | null>(null);
+  const screenVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (!wantSnapshots || !cameraStream) {
+      if (camVideoRef.current) {
+        camVideoRef.current.pause();
+        camVideoRef.current.srcObject = null;
+      }
+      camVideoRef.current = null;
+      return;
+    }
+    const v = document.createElement("video");
+    v.autoplay = true;
+    v.playsInline = true;
+    v.muted = true;
+    v.srcObject = cameraStream;
+    camVideoRef.current = v;
+    return () => {
+      v.pause();
+      v.srcObject = null;
+      camVideoRef.current = null;
+    };
+  }, [cameraStream, wantSnapshots]);
+
+  useEffect(() => {
+    if (!wantSnapshots || !screenStream) {
+      if (screenVideoRef.current) {
+        screenVideoRef.current.pause();
+        screenVideoRef.current.srcObject = null;
+      }
+      screenVideoRef.current = null;
+      return;
+    }
+    const v = document.createElement("video");
+    v.autoplay = true;
+    v.playsInline = true;
+    v.muted = true;
+    v.srcObject = screenStream;
+    screenVideoRef.current = v;
+    return () => {
+      v.pause();
+      v.srcObject = null;
+      screenVideoRef.current = null;
+    };
+  }, [screenStream, wantSnapshots]);
+
   const processQueue = useCallback(async () => {
     if (processingRef.current) return;
     processingRef.current = true;
@@ -37,24 +97,33 @@ export function useEvidenceRecorder(options: EvidenceRecorderOptions) {
           metadata: { ...item.metadata, message: item.message },
         };
 
-        // Gửi báo cáo rỗng ảnh (Server tự chụp qua TrackEgress)
-        await proctorService.reportViolation(examId, payload);
+        if (wantSnapshots) {
+          const snapshotCam = captureFromVideo(camVideoRef.current);
+          const snapshotScreen = captureFromVideo(screenVideoRef.current);
+          if (snapshotCam) payload.snapshot_cam = snapshotCam;
+          if (snapshotScreen) payload.snapshot_screen = snapshotScreen;
+        }
+
+        const res = await proctorService.reportViolation(examId, payload);
+        const violationId = res.data?.violation_id as number | undefined;
+        if (violationId != null && !wantSnapshots) {
+          void livekitPublisher.requestAgentSnapshots(violationId, Number(examId), Number(attemptId));
+        }
       } catch (e) {
         console.error("[EvidenceRecorder] Failed to report violation:", e);
       }
     }
 
     processingRef.current = false;
-  }, [examId, attemptId]);
+  }, [examId, attemptId, wantSnapshots]);
 
   const reportViolation = useCallback(
     (violationType: string, message: string, metadata?: Record<string, unknown>) => {
       if (!enabled) return;
-
       queueRef.current.push({ type: violationType, message, metadata });
       processQueue();
     },
-    [enabled, processQueue]
+    [enabled, processQueue],
   );
 
   return { reportViolation };

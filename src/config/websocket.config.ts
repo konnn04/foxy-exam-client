@@ -45,6 +45,9 @@ export const BROADCAST_EVENTS = {
   // Chat message
   CHAT_MESSAGE: ".chat.message.sent",
 
+  // Server-side face verification lock/unlock
+  FACE_LOCK: ".face.lock",
+
   // Join/Leave room events
   USER_JOINED: "user.joined",
   USER_LEFT: "user.left",

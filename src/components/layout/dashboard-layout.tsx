@@ -1,4 +1,5 @@
 import { Outlet } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./app-sidebar";
 import { Separator } from "@/components/ui/separator";
@@ -10,22 +11,25 @@ import {
 } from "@/components/ui/breadcrumb";
 import { useLocation } from "react-router-dom";
 
-const pageTitles: Record<string, string> = {
-  "/dashboard": "Dashboard",
-  "/courses": "Khóa học",
-  "/history": "Lịch sử thi",
+const pageTitleKeys: Record<string, string> = {
+  "/dashboard": "nav.dashboard",
+  "/courses": "nav.courses",
+  "/history": "nav.history",
+  "/settings": "nav.settings",
+  "/exams": "nav.exam",
 };
 
-function getPageTitle(pathname: string): string {
-  for (const [path, title] of Object.entries(pageTitles)) {
-    if (pathname.startsWith(path)) return title;
+function usePageTitle(pathname: string): string {
+  const { t } = useTranslation();
+  for (const [path, key] of Object.entries(pageTitleKeys)) {
+    if (pathname.startsWith(path)) return t(key);
   }
-  return "Trang";
+  return t("nav.page");
 }
 
 export function DashboardLayout() {
   const location = useLocation();
-  const pageTitle = getPageTitle(location.pathname);
+  const pageTitle = usePageTitle(location.pathname);
 
   return (
     <SidebarProvider>

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import {
   Sidebar,
   SidebarContent,
@@ -23,51 +24,42 @@ import {
   BookOpen,
   History,
   LogOut,
-  Sun,
-  Moon,
-  Monitor,
   ChevronUp,
   GraduationCap,
+  Settings,
+  ExternalLink,
 } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useUser } from "@/hooks/use-user";
-import { useTheme } from "@/hooks/use-theme";
 import { useAlertDialog } from "@/hooks/use-alert-dialog";
+import { API_CONFIG } from "@/config";
+
+const PORTAL_URL = API_CONFIG.OAUTH_BASE_URL;
 
 const navItems = [
-  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Khóa học", url: "/courses", icon: BookOpen },
-  { title: "Lịch sử thi", url: "/history", icon: History },
+  { labelKey: "nav.dashboard", url: "/dashboard", icon: LayoutDashboard },
+  { labelKey: "nav.courses", url: "/courses", icon: BookOpen },
+  { labelKey: "nav.history", url: "/history", icon: History },
+  { labelKey: "nav.settings", url: "/settings", icon: Settings },
 ];
 
 export function AppSidebar() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useUser();
-  const { theme, setTheme } = useTheme();
   const { confirm } = useAlertDialog();
 
   const handleLogout = async () => {
     const ok = await confirm({
-      title: "Đăng xuất",
-      description: "Bạn có chắc chắn muốn đăng xuất khỏi hệ thống?",
-      confirmLabel: "Đăng xuất",
+      title: t("sidebar.logout"),
+      description: t("sidebar.logoutConfirm"),
+      confirmLabel: t("sidebar.logout"),
       variant: "destructive",
     });
     if (ok) {
       await logout();
       navigate("/login");
-    }
-  };
-
-  const getThemeIcon = () => {
-    switch (theme) {
-      case "light":
-        return <Sun className="h-4 w-4" />;
-      case "dark":
-        return <Moon className="h-4 w-4" />;
-      default:
-        return <Monitor className="h-4 w-4" />;
     }
   };
 
@@ -85,9 +77,9 @@ export function AppSidebar() {
                 <GraduationCap className="size-4" />
               </div>
               <div className="flex flex-col gap-0.5 leading-none">
-                <span className="font-semibold">Exam System</span>
+                <span className="font-semibold">{t("brand.name")}</span>
                 <span className="text-xs text-muted-foreground">
-                  Hệ thống giám sát thi cử
+                  {t("brand.tagline")}
                 </span>
               </div>
             </SidebarMenuButton>
@@ -101,14 +93,17 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
+                <SidebarMenuItem key={item.labelKey}>
                   <SidebarMenuButton
-                    isActive={location.pathname.startsWith(item.url)}
+                    isActive={
+                      location.pathname === item.url ||
+                      (item.url !== "/dashboard" && location.pathname.startsWith(item.url))
+                    }
                     onClick={() => navigate(item.url)}
                     className="cursor-pointer"
                   >
                     <item.icon className="h-4 w-4" />
-                    <span>{item.title}</span>
+                    <span>{t(item.labelKey)}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
@@ -127,10 +122,7 @@ export function AppSidebar() {
                   className="cursor-pointer data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                 >
                   <Avatar className="h-8 w-8 rounded-lg">
-                    <AvatarImage
-                      src={user?.avatar}
-                      alt={user?.name}
-                    />
+                    <AvatarImage src={user?.avatar} alt={user?.name} />
                     <AvatarFallback className="rounded-lg">
                       {user?.name
                         ?.split(" ")
@@ -155,27 +147,18 @@ export function AppSidebar() {
                 align="end"
                 sideOffset={4}
               >
+                <DropdownMenuItem asChild className="cursor-pointer">
+                  <a href={`${PORTAL_URL}/profile`} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-4 w-4" />
+                    <span className="ml-2">{t("sidebar.profile")}</span>
+                  </a>
+                </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() =>
-                    setTheme(
-                      theme === "light"
-                        ? "dark"
-                        : theme === "dark"
-                          ? "system"
-                          : "light"
-                    )
-                  }
+                  onClick={() => navigate("/settings")}
                   className="cursor-pointer"
                 >
-                  {getThemeIcon()}
-                  <span className="ml-2">
-                    Giao diện:{" "}
-                    {theme === "light"
-                      ? "Sáng"
-                      : theme === "dark"
-                        ? "Tối"
-                        : "Hệ thống"}
-                  </span>
+                  <Settings className="h-4 w-4" />
+                  <span className="ml-2">{t("sidebar.settings")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -183,7 +166,7 @@ export function AppSidebar() {
                   className="cursor-pointer text-destructive-foreground"
                 >
                   <LogOut className="h-4 w-4" />
-                  <span className="ml-2">Đăng xuất</span>
+                  <span className="ml-2">{t("sidebar.logout")}</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

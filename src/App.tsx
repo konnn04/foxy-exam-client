@@ -9,6 +9,7 @@ import ExamDetailPage from "@/pages/exam-detail";
 import ExamTakePage from "@/pages/exam-take";
 import ExamReviewPage from "@/pages/exam-review";
 import HistoryPage from "@/pages/history";
+import SettingsPage from "@/pages/settings";
 import DisconnectedPage from "@/pages/disconnected";
 
 function App() {
@@ -32,6 +33,7 @@ function App() {
         <Route path="/exams/:id" element={<ExamDetailPage />} />
         <Route path="/exams/:examId/review/:attemptId" element={<ExamReviewPage />} />
         <Route path="/history" element={<HistoryPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Route>
 
       {/* Protected - Full screen (no sidebar) */}

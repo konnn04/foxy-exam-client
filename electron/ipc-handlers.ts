@@ -28,6 +28,20 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
     }
   });
 
+  /** Awaitable: leave exam lockdown — always-on-top off, native fullscreen off, then normal maximized desktop window. */
+  ipcMain.handle("reset-exam-window-state", () => {
+    const mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setFullScreen(false);
+    if (!mainWindow.isMaximized()) {
+      mainWindow.maximize();
+    }
+    mainWindow.focus();
+  });
+
   ipcMain.on("quit-app", () => {
     app.quit();
   });

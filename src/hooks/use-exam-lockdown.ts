@@ -178,25 +178,16 @@ export function useExamLockdown({
     };
   }, [wizardPhase, addViolation, submitting, config]);
 
-  // Always On Top & Network Info
+  // Network info (Electron): window chrome is owned by useElectronExamStrictWindow on the take route.
   useEffect(() => {
     if (wizardPhase < 5) return;
-
-    if (window.electronAPI?.setAlwaysOnTop && !DEVELOPMENT_MODE.ENABLED) {
-      window.electronAPI.setAlwaysOnTop(true);
-    }
-
-    if (window.electronAPI?.getNetworkInfo) {
-      window.electronAPI.getNetworkInfo().then(info => {
-        console.log("Exam Client Network Info:", info);
-      }).catch(e => console.error("Failed to fetch network info", e));
-    }
-    
-    return () => {
-      if (window.electronAPI?.setAlwaysOnTop) {
-        window.electronAPI.setAlwaysOnTop(false);
-      }
-    };
+    if (!window.electronAPI?.getNetworkInfo) return;
+    window.electronAPI
+      .getNetworkInfo()
+      .then((info) => {
+        console.log("Foxy Exam client network info:", info);
+      })
+      .catch((e) => console.error("Failed to fetch network info", e));
   }, [wizardPhase]);
 
   // Hardware Checks (Banned Apps, Multiple Screens, FPS)
@@ -301,23 +292,26 @@ export function useExamLockdown({
     return () => clearInterval(monitorInterval);
   }, [wizardPhase, config, addViolation, examId, setIsBlurred, setBlurReason]);
 
+  // Fullscreen: Electron native mode is set for the whole take route by useElectronExamStrictWindow.
+  // Here we only use the Fullscreen API for non-Electron (browser) builds.
   useEffect(() => {
     if (wizardPhase < 5) return;
+    if (window.electronAPI?.setFullScreen) return;
+
     const trackingLvl = config?.level || "strict";
 
     const requestFullscreen = async () => {
       if (trackingLvl === "none") return;
       if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_FULLSCREEN) return;
       try {
-        if (window.electronAPI?.setFullScreen) {
-          window.electronAPI.setFullScreen(true);
-        } else if (!document.fullscreenElement) {
+        if (!document.fullscreenElement) {
           await document.documentElement.requestFullscreen();
         }
       } catch {
+        /* plug-in: production error reporting */
       }
     };
-    requestFullscreen();
+    void requestFullscreen();
 
     const handleFullscreenChange = () => {
       if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_FULLSCREEN) return;
@@ -325,7 +319,7 @@ export function useExamLockdown({
         if (trackingLvl !== "none") {
           const blurReasonFullscreen = "Chế độ xem toàn màn hình đã bị tắt.";
           addViolation("exit_fullscreen", blurReasonFullscreen);
-          
+
           if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_DEV) {
             toast.error(`[Dev Bypass] ${blurReasonFullscreen}`);
           } else {

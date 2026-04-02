@@ -6,7 +6,7 @@ import { webrtcService } from "@/lib/webrtc-service";
 import { livekitPublisher } from "@/lib/livekit-publisher";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import { useAlertDialog } from "@/hooks/use-alert-dialog";
-import { ExamMainContent, ExamOverlay, ExamSidebar, ExamStatusBar } from "@/components/exam/exam-take-sections";
+import { ExamMainContent, ExamOverlay, ExamTopNav, ExamStatusBar } from "@/components/exam/exam-take-sections";
 import { WebcamPopup, WebcamPopupHandle } from "@/components/exam/webcam-popup";
 import { useFaceMonitor } from "@/hooks/use-face-monitor";
 import { useExamLockdown } from "@/hooks/use-exam-lockdown";
@@ -20,6 +20,10 @@ import { useProctorStore } from "@/stores/use-proctor-store";
 import { STORAGE_KEYS } from "@/config";
 import { AttemptChatbox } from "@/components/chat/AttemptChatbox";
 import type { ExamData, ExamTrackingConfig, Answer, Violation } from "@/types/exam";
+import { useTranslation } from "react-i18next";
+import { exitExamFullscreen } from "@/lib/exit-fullscreen";
+import { isLeafAnswered } from "@/lib/exam-answer-utils";
+import { useExamHistoryLock } from "@/hooks/use-exam-history-lock";
 
 export interface ExamSessionProps {
   examId: string;
@@ -27,6 +31,11 @@ export interface ExamSessionProps {
   cameraStream: MediaStream | null;
   initialScreenStream: MediaStream | null;
   config: ExamTrackingConfig;
+  /**
+   * Phone QR publishes video as LiveKit `-mobile` only; desktop does not republish that video.
+   * Supervisor-agent and proctor UI use desktop camera + screen only.
+   */
+  mobileRelayOnly?: boolean;
 }
 
 export function ExamSession({
@@ -35,10 +44,12 @@ export function ExamSession({
   cameraStream,
   initialScreenStream,
   config,
+  mobileRelayOnly = false,
 }: ExamSessionProps) {
   const navigate = useNavigate();
   const toast = useToastCustom();
   const { confirm } = useAlertDialog();
+  const { t } = useTranslation();
 
   const webcamPopupRef = useRef<WebcamPopupHandle>(null);
 
@@ -61,6 +72,7 @@ export function ExamSession({
   const [answers, setAnswers] = useState<Map<number, Answer>>(new Map());
   const [flagged, setFlagged] = useState<Set<number>>(new Set());
   const [submitting, setSubmitting] = useState(false);
+  useExamHistoryLock(Boolean(data) && !submitting);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dataJustLoadedRef = useRef(true);
 
@@ -72,6 +84,7 @@ export function ExamSession({
   
   // Zustand read: face monitor warnings are piped directly here (causes minimal re-renders when warning changes)
   const monitorWarning = useProctorStore((s) => s.monitorWarning);
+  const faceAuthLockedMsg = useProctorStore((s) => s.faceAuthLockedMsg);
 
   const [isScreenSharing, setIsScreenSharing] = useState(!!initialScreenStream);
   const [isLiveKitConnected, setIsLiveKitConnected] = useState(false);
@@ -101,19 +114,25 @@ export function ExamSession({
     }
   }, [toast]);
 
-  // Evidence recorder: reports violations to server without sending images (V4)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const currentScreenStream = isScreenSharing ? screenStreamRef.current : null;
+
   const { reportViolation } = useEvidenceRecorder({
     examId,
     attemptId,
     enabled: !submitting,
+    cameraStream,
+    screenStream: currentScreenStream,
   });
 
-  // When a violation is added, also report it with video evidence
+  // When a violation is added locally, report to exam-sys with evidence (skip server-broadcast rows)
   const prevViolationsLenRef = useRef(0);
   useEffect(() => {
     if (violations.length > prevViolationsLenRef.current) {
       const latest = violations[violations.length - 1];
-      reportViolation(latest.type, latest.message);
+      if (!latest.fromServer) {
+        reportViolation(latest.type, latest.message);
+      }
     }
     prevViolationsLenRef.current = violations.length;
   }, [violations, reportViolation]);
@@ -131,7 +150,7 @@ export function ExamSession({
   // Audio monitoring for speech detection during exam
   const { speechDetected: _speechDetected, isRecording: _isRecordingAudio, clipCount: _audioClipCount } = useAudioMonitor({
     stream: cameraStream,
-    enabled: !submitting,
+    enabled: !submitting && Boolean(cameraStream),
     examId,
     attemptId,
   });
@@ -148,12 +167,16 @@ export function ExamSession({
     }
   }, []);
 
+  // Periodic face-crop + server jobs disabled — LiveKit supervisor-agent handles face/object + evidence.
+  const uploadFramesToServer = false;
+
   useFaceMonitor(
     cameraStream,
-    true,
+    Boolean(cameraStream),
     handleFrameRender,
     examId,
-    config?.face_verification_interval_seconds
+    attemptId,
+    uploadFramesToServer,
   );
 
   const lastToastWarningRef = useRef("");
@@ -183,13 +206,14 @@ export function ExamSession({
     }
   }, [hardwareLock, toast]);
 
+  const effectiveWarning = faceAuthLockedMsg || monitorWarning;
+  const showLockOverlay = effectiveWarning !== "" && !devBypassLock && !(DEVELOPMENT_MODE.ENABLED && NO_LOCKSCREEN_WHEN_DEV_MODE);
+
   useEffect(() => {
-    if (!monitorWarning && devBypassLock) {
+    if (!effectiveWarning && devBypassLock) {
       setDevBypassLock(false);
     }
-  }, [monitorWarning, devBypassLock]);
-
-  const showLockOverlay = monitorWarning !== "" && !devBypassLock && !(DEVELOPMENT_MODE.ENABLED && NO_LOCKSCREEN_WHEN_DEV_MODE);
+  }, [effectiveWarning, devBypassLock]);
 
   const localIdx = globalIdx % perPage;
   const currentQuestion = currentQuestions[localIdx];
@@ -377,8 +401,39 @@ export function ExamSession({
       setBlurReason('');
     });
 
-    useExamSocketStore.getState().onViolation((_v: any) => {
-      // Violations are received in real-time via the presence channel
+    useExamSocketStore.getState().onViolation((event: {
+      violationId?: number;
+      type?: string;
+      severity?: string;
+      userId?: number;
+      attemptId?: number;
+      userName?: string | null;
+    }) => {
+      if (!event || event.attemptId !== attemptIdNum || event.userId !== currentUserId) return;
+
+      const vType = event.type || "violation";
+      const labels: Record<string, string> = {
+        prohibited_object: "Hệ thống phát hiện vật thể bị cấm trong khung hình camera.",
+        face_verification_failed: "Cảnh báo: xác thực khuôn mặt không đạt.",
+      };
+      const message = labels[vType] || `Giám sát ghi nhận vi phạm (${vType}).`;
+
+      setViolations((prev) => [
+        ...prev,
+        { type: vType, timestamp: Date.now(), message, fromServer: true },
+      ]);
+
+      const critical =
+        event.severity === "critical" ||
+        vType === "prohibited_object" ||
+        vType === "face_verification_failed";
+      if (critical) {
+        toast.error(message);
+        if (!(DEVELOPMENT_MODE.ENABLED && NO_LOCKSCREEN_WHEN_DEV_MODE)) {
+          setIsBlurred(true);
+          setBlurReason(message);
+        }
+      }
     });
 
     if (cameraStream) {
@@ -393,6 +448,7 @@ export function ExamSession({
       try {
         const connected = await livekitPublisher.connect({
           examId: examIdNum,
+          attemptId: attemptIdNum,
           onConnectionChange: (state) => {
             console.log('[ExamTake] LiveKit state:', state);
             if (state === 'connected') setIsLiveKitConnected(true);
@@ -400,6 +456,7 @@ export function ExamSession({
           },
           onError: (err) => {
             console.warn('[ExamTake] LiveKit error:', err);
+            toast.error(err);
           },
         });
 
@@ -419,15 +476,31 @@ export function ExamSession({
           "Bài thi đã bị đình chỉ",
           signal.data?.reason || "Giám thị đã buộc dừng bài thi của bạn."
         );
-        // Instant 0-latency stop
+        livekitPublisher.disconnect();
         if (cameraStream) cameraStream.getTracks().forEach((t) => t.stop());
         if (screenStreamRef.current) screenStreamRef.current.getTracks().forEach((t) => t.stop());
-        if (window.electronAPI?.setFullScreen) window.electronAPI.setFullScreen(false);
-        else if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-        navigate(`/exams/${examIdNum}`, { replace: true });
+        void (async () => {
+          await exitExamFullscreen();
+          navigate(`/exams/${examIdNum}`, { replace: true });
+        })();
       }
     };
     window.addEventListener('webrtc-signal', handleSignal as EventListener);
+
+    // Server-side face verification lock/unlock
+    const handleFaceLock = (e: CustomEvent) => {
+      const { locked, reason } = e.detail || {};
+      if (locked) {
+        useProctorStore.getState().setFaceAuthLockedMsg(
+          reason === 'wrong_face'
+            ? 'Khuôn mặt không khớp! Bài thi bị tạm khóa cho đến khi xác minh lại danh tính.'
+            : 'Xác thực khuôn mặt thất bại. Vui lòng ngồi đúng vị trí camera.'
+        );
+      } else {
+        useProctorStore.getState().setFaceAuthLockedMsg('');
+      }
+    };
+    window.addEventListener('face-lock', handleFaceLock as EventListener);
 
     // Polling fallback: check attempt status every 30s
     const statusPollId = setInterval(async () => {
@@ -435,6 +508,8 @@ export function ExamSession({
         const res = await api.get(`/student/exams/${examIdNum}/attempt/${attemptIdNum}/status`);
         if (res.data?.submitted_at) {
           toast.error("Bài thi đã bị đình chỉ bởi giám thị.");
+          livekitPublisher.disconnect();
+          await exitExamFullscreen();
           navigate(`/exams/${examIdNum}`, { replace: true });
         }
       } catch {
@@ -446,19 +521,23 @@ export function ExamSession({
       webrtcService.destroy();
       livekitPublisher.disconnect();
       window.removeEventListener('webrtc-signal', handleSignal as EventListener);
+      window.removeEventListener('face-lock', handleFaceLock as EventListener);
       clearInterval(statusPollId);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.exam?.id]);
 
-  // ─── LiveKit: publish camera when stream becomes available ──
+  // ─── LiveKit: desktop publishes webcam + mic; phone relay stays on `-mobile` only (cam 2). ──
   useEffect(() => {
     if (cameraStream && isLiveKitConnected) {
-      livekitPublisher.publishCamera(cameraStream).catch(err =>
-        console.warn('[ExamTake] Failed to publish camera to LiveKit:', err)
-      );
+      livekitPublisher
+        .publishCamera(cameraStream, {
+          includeVideo: !mobileRelayOnly,
+          includeAudio: true,
+        })
+        .catch((err) => console.warn("[ExamTake] Failed to publish camera to LiveKit:", err));
     }
-  }, [cameraStream, isLiveKitConnected]);
+  }, [cameraStream, isLiveKitConnected, mobileRelayOnly]);
 
   // ─── LiveKit: publish screen when sharing starts and connected ──
   useEffect(() => {
@@ -528,6 +607,26 @@ export function ExamSession({
     saveAnswer(questionId, null, content);
   };
 
+  const handleShortAnswerChange = (questionId: number, content: string) => {
+    const answer: Answer = { question_id: questionId, answer_content: content };
+    setAnswers((prev) => new Map(prev).set(questionId, answer));
+    saveAnswer(questionId, null, content);
+  };
+
+  const handleTrueFalseSelect = (questionId: number, value: boolean) => {
+    const content = value ? "true" : "false";
+    const answer: Answer = { question_id: questionId, answer_content: content };
+    setAnswers((prev) => new Map(prev).set(questionId, answer));
+    saveAnswer(questionId, null, content);
+  };
+
+  const handleFillBlankChange = (questionId: number, slots: string[]) => {
+    const json = JSON.stringify(slots);
+    const answer: Answer = { question_id: questionId, answer_content: json };
+    setAnswers((prev) => new Map(prev).set(questionId, answer));
+    saveAnswer(questionId, null, json);
+  };
+
   const handleToggleFlag = async (questionId: number) => {
     setFlagged((prev) => {
       const next = new Set(prev);
@@ -548,15 +647,15 @@ export function ExamSession({
     if (submitting) return;
 
     if (!auto) {
-      const unanswered = totalQuestions - answers.size;
+      const unanswered = allIds.filter((id) => !isLeafAnswered(answers.get(id))).length;
       const message =
         unanswered > 0
-          ? `Bạn còn ${unanswered} câu chưa trả lời. Bạn có chắc chắn muốn nộp bài?`
-          : "Bạn có chắc chắn muốn nộp bài thi?";
+          ? t("exam.confirmSubmitUnanswered", { n: unanswered })
+          : t("exam.confirmSubmit");
       const ok = await confirm({
-        title: "Nộp bài thi",
+        title: t("exam.confirmSubmitTitle"),
         description: message,
-        confirmLabel: "Nộp bài",
+        confirmLabel: t("exam.confirmSubmitAction"),
         variant: "destructive",
       });
       if (!ok) return;
@@ -574,13 +673,7 @@ export function ExamSession({
 
       stopScreenCapture();
 
-      if (document.fullscreenElement) {
-        await document.exitFullscreen().catch(() => {});
-      }
-
-      if (window.electronAPI?.setAlwaysOnTop) {
-        window.electronAPI.setAlwaysOnTop(false);
-      }
+      await exitExamFullscreen();
 
       if (window.electronAPI?.saveExamLog) {
         try {
@@ -590,13 +683,19 @@ export function ExamSession({
         }
       }
 
+      livekitPublisher.disconnect();
+
       await api.post(`/student/exams/${examId}/submit/${attemptId}`);
       toast.success(auto ? "Bài thi đã tự động nộp (hết giờ)" : "Nộp bài thành công!");
-      navigate(`/exams/${examId}`, { replace: true });
+      const backExamId = data?.exam?.id ?? examId;
+      navigate(`/exams/${backExamId}`, { replace: true });
     } catch (err: any) {
       if (err?.response?.status === 400 && err?.response?.data?.message === "Bài thi đã được nộp.") {
+        livekitPublisher.disconnect();
+        await exitExamFullscreen();
         toast.success(auto ? "Bài thi đã tự động nộp (hết giờ)" : "Bài thi đã được nộp từ trước!");
-        navigate(`/exams/${examId}`, { replace: true });
+        const backExamId = data?.exam?.id ?? examId;
+        navigate(`/exams/${backExamId}`, { replace: true });
         return;
       }
       toast.error("Không thể nộp bài thi");
@@ -613,49 +712,49 @@ export function ExamSession({
   if (loading || !data) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
-        <div className="text-center space-y-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto" />
-          <p className="text-muted-foreground">Đang tải bài thi...</p>
+        <div className="space-y-4 text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          <p className="text-muted-foreground">{t("exam.loadingExam")}</p>
         </div>
       </div>
     );
   }
 
-  const answeredCount = Math.min(answers.size, totalQuestions);
-  const progressPercent = totalQuestions > 0 ? (answeredCount / totalQuestions) * 100 : 0;
+  const answeredCount = allIds.filter((id) => isLeafAnswered(answers.get(id))).length;
+  const progressPercent = allIds.length > 0 ? (answeredCount / allIds.length) * 100 : 0;
 
   return (
     <div
-      className="flex flex-col h-screen bg-background select-none relative overflow-hidden"
+      className="relative flex h-screen select-none flex-col overflow-hidden bg-background"
       style={{ userSelect: "none", WebkitUserSelect: "none" }}
     >
-      <div className="flex flex-1 overflow-hidden w-full relative">
-        {config?.requireCamera !== false && (
-          <WebcamPopup ref={webcamPopupRef} stream={cameraStream} />
-        )}
+      <ExamTopNav
+        examTitle={data.exam.name ?? data.exam.title ?? ""}
+        formatTime={formatTime}
+        progressPercent={progressPercent}
+            answeredCount={answeredCount}
+            totalQuestions={allIds.length || totalQuestions}
+        allIds={allIds}
+        answers={answers}
+        flagged={flagged}
+        globalIdx={globalIdx}
+        changingPage={changingPage}
+        onGoToQuestion={handleGoToQuestion}
+        violationsCount={violations.length}
+        submitting={submitting}
+        onSubmit={() => handleSubmit()}
+      />
 
-        <ExamSidebar
-          formatTime={formatTime}
-          progressPercent={progressPercent}
-          answeredCount={answeredCount}
-          totalQuestions={totalQuestions}
-          allIds={allIds}
-          answers={answers}
-          flagged={flagged}
-          globalIdx={globalIdx}
-          changingPage={changingPage}
-          onGoToQuestion={handleGoToQuestion}
-          violationsCount={violations.length}
-          submitting={submitting}
-          onSubmit={() => handleSubmit()}
-        />
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {config?.requireCamera !== false &&
+          (cameraStream ? <WebcamPopup ref={webcamPopupRef} stream={cameraStream} /> : null)}
 
-        <div className="flex-1 flex flex-col relative overflow-hidden bg-muted/20">
+        <div className="relative z-0 flex min-h-0 flex-1 flex-col bg-muted/10">
           <ExamOverlay
             showLockOverlay={showLockOverlay && config?.requireCamera !== false}
             isBlurred={isBlurred}
             hardwareLock={hardwareLock}
-            monitorWarning={monitorWarning}
+            monitorWarning={effectiveWarning}
             blurReason={blurReason}
             violationsCount={violations.length}
             devBypassLock={devBypassLock}
@@ -665,7 +764,6 @@ export function ExamSession({
           />
 
           <ExamMainContent
-            data={data}
             currentQuestion={currentQuestion}
             globalIdx={globalIdx}
             totalQuestions={totalQuestions}
@@ -674,9 +772,12 @@ export function ExamSession({
             onToggleFlag={handleToggleFlag}
             onSelectOption={handleSelectOption}
             onEssayChange={handleEssayChange}
+            onShortAnswerChange={handleShortAnswerChange}
+            onTrueFalseSelect={handleTrueFalseSelect}
+            onFillBlankChange={handleFillBlankChange}
             answers={answers}
             isBlurred={isBlurred}
-            monitorWarning={monitorWarning}
+            monitorWarning={effectiveWarning}
             onGoToQuestion={handleGoToQuestion}
           />
         </div>

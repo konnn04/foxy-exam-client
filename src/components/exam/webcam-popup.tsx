@@ -4,12 +4,17 @@ import { Video, VideoOff, Minimize2, ScanFace } from "lucide-react";
 import type { FaceLandmarkerResult } from "@mediapipe/tasks-vision";
 import { DrawingUtils, FaceLandmarker } from "@mediapipe/tasks-vision";
 import { extractPitchYaw } from "@/lib/mediapipe-service";
-import {
-  DEVELOPMENT_MODE,
-  WEBCAM_POPUP_TIMING,
-  WEBCAM_POPUP_DIMENSIONS,
-} from "@/config";
-import { useExamSocketStore } from '@/hooks/use-exam-socket';
+import { DEVELOPMENT_MODE, WEBCAM_POPUP_DIMENSIONS } from "@/config";
+
+function initialBottomLeftPosition() {
+  if (typeof window === "undefined") return { x: 16, y: 100 };
+  const h = WEBCAM_POPUP_DIMENSIONS.NORMAL.HEIGHT_PX;
+  const statusBarReserve = 40;
+  return {
+    x: 16,
+    y: Math.max(16, window.innerHeight - h - statusBarReserve),
+  };
+}
 
 export interface WebcamPopupHandle {
   drawFrame: (results: FaceLandmarkerResult | null) => void;
@@ -29,7 +34,7 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
   
   const [minimized, setMinimized] = useState(false);
   const [showMesh, setShowMesh] = useState(true);
-  const [position, setPosition] = useState({ x: 20, y: 20 });
+  const [position, setPosition] = useState(initialBottomLeftPosition);
   const [dragging, setDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
 
@@ -38,6 +43,21 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
       videoRef.current.srcObject = stream;
     }
   }, [stream, minimized]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (!containerRef.current || minimized) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const h = rect.height;
+      const statusBarReserve = 40;
+      setPosition((p) => ({
+        x: Math.min(p.x, Math.max(0, window.innerWidth - rect.width - 8)),
+        y: Math.min(p.y, Math.max(8, window.innerHeight - h - statusBarReserve)),
+      }));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [minimized]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (containerRef.current) {
@@ -70,75 +90,7 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
     };
   }, [dragging]);
 
-  // Periodic Face Cropping & Mock POST
-  useEffect(() => {
-    if (!stream) return;
-
-    const interval = setInterval(() => {
-      if (!latestLandmarksRef.current || !latestLandmarksRef.current.length) return;
-      if (!videoRef.current) return;
-
-      const video = videoRef.current;
-      const landmarks = latestLandmarksRef.current[0]; // Get first face
-
-      // Compute bounding box
-      let minX = 1, minY = 1, maxX = 0, maxY = 0;
-      for (const point of landmarks) {
-        minX = Math.min(minX, point.x);
-        minY = Math.min(minY, point.y);
-        maxX = Math.max(maxX, point.x);
-        maxY = Math.max(maxY, point.y);
-      }
-
-      // Add generous padding (60% around the face) so face service can detect it
-      const paddingX = (maxX - minX) * 0.6;
-      const paddingY = (maxY - minY) * 0.6;
-
-      minX = Math.max(0, minX - paddingX);
-      minY = Math.max(0, minY - paddingY);
-      maxX = Math.min(1, maxX + paddingX);
-      maxY = Math.min(1, maxY + paddingY);
-
-      const cropX = minX * video.videoWidth;
-      const cropY = minY * video.videoHeight;
-      const cropW = (maxX - minX) * video.videoWidth;
-      const cropH = (maxY - minY) * video.videoHeight;
-
-      if (cropW <= 0 || cropH <= 0) return;
-
-      // Draw cropped face to offscreen canvas (min 300px for quality)
-      const scale = Math.max(1, 300 / Math.min(cropW, cropH));
-      const offCanvas = document.createElement("canvas");
-      offCanvas.width = Math.round(cropW * scale);
-      offCanvas.height = Math.round(cropH * scale);
-      const offCtx = offCanvas.getContext("2d");
-      if (!offCtx) return;
-
-      offCtx.drawImage(
-        video,
-        cropX, cropY, cropW, cropH,
-        0, 0, offCanvas.width, offCanvas.height
-      );
-
-      // Convert to Base64
-      const base64Image = offCanvas.toDataURL("image/jpeg", 0.8);
-      const base64Data = base64Image.replace(/^data:image\/[a-z]+;base64,/, "");
-      useExamSocketStore.getState().uploadFaceCrop(base64Data).then((match) => {
-        if (match === false) {
-          console.warn('[WebcamPopup] Face mismatch detected!');
-          // Log violation for the teacher to see
-          useExamSocketStore.getState().logEvent('face_verification_failed', {
-            message: 'Khuôn mặt không khớp với ảnh đăng ký',
-            match: false,
-          });
-        }
-      }).catch((err) => {
-        console.error("[WebcamPopup] Failed to upload face crop:", err);
-      });
-    }, WEBCAM_POPUP_TIMING.FACE_CROP_INTERVAL_MS); // Trigger periodically
-
-    return () => clearInterval(interval);
-  }, [stream]);
+  // Face crop upload is handled by useFaceMonitor hook in exam-session.tsx
 
   useImperativeHandle(ref, () => ({
     drawFrame: (results) => {
@@ -198,7 +150,7 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
   return (
     <div
       ref={containerRef}
-      className="fixed z-[1500] rounded-xl overflow-hidden shadow-2xl border border-border bg-card"
+      className="fixed z-[1200] rounded-xl overflow-hidden shadow-2xl border-2 border-primary/20 bg-card ring-1 ring-black/5 dark:ring-white/10"
       style={{
         left: position.x,
         top: position.y,

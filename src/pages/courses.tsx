@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import api from "@/lib/api";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import {
@@ -29,6 +30,7 @@ interface PaginationMeta {
 }
 
 export default function CoursesPage() {
+  const { t } = useTranslation();
   const [courses, setCourses] = useState<Course[]>([]);
   const [meta, setMeta] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -44,7 +46,7 @@ export default function CoursesPage() {
         setCourses(res.data.data ?? res.data.courses ?? res.data);
         setMeta(res.data.meta ?? res.data);
       } catch {
-        toast.error("Không thể tải danh sách khóa học");
+        toast.error(t("courses.loadError"));
       } finally {
         setLoading(false);
       }
@@ -64,17 +66,15 @@ export default function CoursesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Khóa học</h1>
-        <p className="text-muted-foreground">
-          Danh sách các khóa học bạn đã đăng ký
-        </p>
+        <h1 className="text-2xl font-bold tracking-tight">{t("courses.title")}</h1>
+        <p className="text-muted-foreground">{t("courses.subtitle")}</p>
       </div>
 
       {!courses.length ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <BookOpen className="h-12 w-12 mb-3 text-muted-foreground opacity-50" />
-            <p className="text-muted-foreground">Chưa đăng ký khóa học nào</p>
+            <p className="text-muted-foreground">{t("courses.noCourses")}</p>
           </CardContent>
         </Card>
       ) : (
@@ -98,13 +98,11 @@ export default function CoursesPage() {
               {(course.description || course.exams_count !== undefined) && (
                 <CardContent>
                   {course.description && (
-                    <p className="text-sm text-muted-foreground line-clamp-2">
-                      {course.description}
-                    </p>
+                    <p className="text-sm text-muted-foreground line-clamp-2">{course.description}</p>
                   )}
                   {course.exams_count !== undefined && (
                     <p className="text-sm text-muted-foreground mt-2">
-                      {course.exams_count} bài thi
+                      {t("courses.examCount", { count: course.exams_count })}
                     </p>
                   )}
                 </CardContent>
@@ -114,27 +112,16 @@ export default function CoursesPage() {
         </div>
       )}
 
-      {}
       {meta && meta.last_page > 1 && (
         <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            Trước
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+            {t("common.prev")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Trang {page} / {meta.last_page}
+            {t("common.page", { current: page, total: meta.last_page })}
           </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page >= meta.last_page}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Sau
+          <Button variant="outline" size="sm" disabled={page >= meta.last_page} onClick={() => setPage((p) => p + 1)}>
+            {t("common.next")}
           </Button>
         </div>
       )}

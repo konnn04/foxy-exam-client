@@ -1,8 +1,8 @@
 {
-  "name": "foxy-exam-client",
+  "name": "foxy-exam",
   "private": true,
   "version": "0.1.0",
-  "description": "Exam client desktop application",
+  "description": "Foxy Exam — desktop client for proctored exams",
   "author": {
     "name": "Konnn04",
     "email": "trieukon1011@gmail.com"
@@ -19,8 +19,8 @@
     "preview": "vite preview"
   },
   "build": {
-    "appId": "com.examclient.app",
-    "productName": "ExamClient",
+    "appId": "com.foxyexam.app",
+    "productName": "Foxy Exam",
     "directories": {
       "output": "release/${version}"
     },
@@ -32,7 +32,8 @@
       "target": [
         "dmg",
         "zip"
-      ]
+      ],
+      "artifactName": "${productName}.${ext}"
     },
     "win": {
       "target": [
@@ -42,15 +43,17 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "artifactName": "${productName}-Setup.${ext}"
     },
     "linux": {
       "target": [
         "AppImage",
         "deb"
       ],
-      "maintainer": "Exam Client Team <trieukon1011@gmail.com>",
-      "category": "Education"
+      "maintainer": "Foxy Exam <trieukon1011@gmail.com>",
+      "category": "Education",
+      "artifactName": "${productName}.${ext}"
     }
   },
   "dependencies": {
@@ -61,18 +64,22 @@
     "axios": "^1.13.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "i18next": "^26.0.3",
     "laravel-echo": "^2.3.1",
     "livekit-client": "^2.18.0",
     "lucide-react": "^0.575.0",
     "medium-zoom": "^1.1.0",
     "next-themes": "^0.4.6",
     "pusher-js": "^8.4.0",
+    "qrcode.react": "^4.2.0",
     "radix-ui": "^1.4.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-hook-form": "^7.71.2",
+    "react-i18next": "^17.0.2",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.13.1",
+    "react-syntax-highlighter": "^16.1.1",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
     "sonner": "^2.0.7",
@@ -86,6 +93,7 @@
     "@types/node": "^25.3.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.6.0",
     "electron": "^35.0.1",
     "electron-builder": "^26.0.12",
