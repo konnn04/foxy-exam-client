@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import api from "@/lib/api";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import {
@@ -47,6 +48,7 @@ interface Course {
 }
 
 export default function CourseDetailPage() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const [course, setCourse] = useState<Course | null>(null);
   const [exams, setExams] = useState<Exam[]>([]);
@@ -61,7 +63,7 @@ export default function CourseDetailPage() {
         setCourse(res.data.course ?? res.data);
         setExams(res.data.exams ?? res.data.course?.exams ?? []);
       } catch {
-        toast.error("Không thể tải thông tin khóa học");
+        toast.error(t("courseDetail.loadError"));
         navigate("/courses");
       } finally {
         setLoading(false);
@@ -87,20 +89,19 @@ export default function CourseDetailPage() {
     if (exam.status) {
       switch (exam.status.toUpperCase()) {
         case "ACTIVE":
-          return { label: "Đang mở", variant: "default" as const };
+          return { label: t("examDetail.statusOpen"), variant: "default" as const };
         case "UPCOMING":
-          return { label: "Sắp tới", variant: "secondary" as const };
+          return { label: t("examDetail.statusUpcoming"), variant: "secondary" as const };
         case "ENDED":
         case "COMPLETED":
-          return { label: "Đã kết thúc", variant: "outline" as const };
+          return { label: t("examDetail.statusEnded"), variant: "outline" as const };
       }
     }
     const start = new Date(exam.start_time);
     const end = new Date(exam.end_time);
-    if (now < start) return { label: "Sắp tới", variant: "secondary" as const };
-    if (now >= start && now <= end)
-      return { label: "Đang mở", variant: "default" as const };
-    return { label: "Đã kết thúc", variant: "outline" as const };
+    if (now < start) return { label: t("examDetail.statusUpcoming"), variant: "secondary" as const };
+    if (now >= start && now <= end) return { label: t("examDetail.statusOpen"), variant: "default" as const };
+    return { label: t("examDetail.statusEnded"), variant: "outline" as const };
   };
 
   const teacherName = course.presiding_teacher
@@ -110,13 +111,8 @@ export default function CourseDetailPage() {
   return (
     <div className="space-y-6">
       <div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate("/courses")}
-          className="mb-2 -ml-2"
-        >
-          ← Quay lại
+        <Button variant="ghost" size="sm" onClick={() => navigate("/courses")} className="mb-2 -ml-2">
+          ← {t("common.back")}
         </Button>
         <h1 className="text-2xl font-bold tracking-tight">{course.name}</h1>
         <div className="flex items-center gap-3 text-muted-foreground mt-1">
@@ -124,38 +120,35 @@ export default function CourseDetailPage() {
           {course.class_name && (
             <>
               <span>•</span>
-              <span>Lớp: {course.class_name}</span>
+              <span>{t("courseDetail.class")}: {course.class_name}</span>
             </>
           )}
         </div>
       </div>
 
-      {}
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
-            <BookOpen className="h-4 w-4" /> Thông tin khóa học
+            <BookOpen className="h-4 w-4" /> {t("courseDetail.info")}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {course.subject && (
             <div className="flex items-center gap-2 text-sm">
               <BookOpen className="h-4 w-4 text-muted-foreground" />
-              <span className="text-muted-foreground">Môn học:</span>
+              <span className="text-muted-foreground">{t("courseDetail.subject")}:</span>
               <span className="font-medium">{course.subject.name}</span>
             </div>
           )}
           {teacherName && (
             <div className="flex items-center gap-2 text-sm">
               <User className="h-4 w-4 text-muted-foreground" />
-              <span className="text-muted-foreground">Giảng viên:</span>
+              <span className="text-muted-foreground">{t("courseDetail.teacher")}:</span>
               <span className="font-medium">{teacherName}</span>
             </div>
           )}
           {course.description && (
-            <p className="text-sm text-muted-foreground mt-2">
-              {course.description}
-            </p>
+            <p className="text-sm text-muted-foreground mt-2">{course.description}</p>
           )}
         </CardContent>
       </Card>
@@ -165,16 +158,14 @@ export default function CourseDetailPage() {
       <div>
         <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
           <FileText className="h-5 w-5" />
-          Danh sách bài thi ({exams.length})
+          {t("courseDetail.examList", { count: exams.length })}
         </h2>
 
         {!exams.length ? (
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-12">
               <FileText className="h-12 w-12 mb-3 text-muted-foreground opacity-50" />
-              <p className="text-muted-foreground">
-                Chưa có bài thi nào được công bố
-              </p>
+              <p className="text-muted-foreground">{t("courseDetail.noExams")}</p>
             </CardContent>
           </Card>
         ) : (
@@ -182,7 +173,7 @@ export default function CourseDetailPage() {
             {exams.map((exam) => {
               const status = getExamStatus(exam);
               const duration = exam.duration ?? exam.duration_minutes ?? 0;
-              const examName = exam.name ?? exam.title ?? `Bài thi #${exam.id}`;
+              const examName = exam.name ?? exam.title ?? `#${exam.id}`;
 
               return (
                 <Card
@@ -192,13 +183,11 @@ export default function CourseDetailPage() {
                 >
                   <CardContent className="flex items-center justify-between p-4">
                     <div className="space-y-1">
-                      <p className="font-medium group-hover:text-primary transition-colors">
-                        {examName}
-                      </p>
+                      <p className="font-medium group-hover:text-primary transition-colors">{examName}</p>
                       <div className="flex items-center gap-3 text-sm text-muted-foreground">
                         <span className="flex items-center gap-1">
                           <Clock className="h-3.5 w-3.5" />
-                          {duration} phút
+                          {duration} {t("common.minutes")}
                         </span>
                         <span className="flex items-center gap-1">
                           <CalendarDays className="h-3.5 w-3.5" />
@@ -206,7 +195,7 @@ export default function CourseDetailPage() {
                         </span>
                         {exam.attempt_count !== undefined && (
                           <span className="text-xs">
-                            Đã thi: {exam.attempt_count} lần
+                            {t("courseDetail.attempted", { count: exam.attempt_count })}
                           </span>
                         )}
                       </div>

@@ -1,14 +1,25 @@
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { DEVELOPMENT_MODE } from "@/config/security.config";
 import {
   AlertTriangle,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Clock,
   Flag,
+  LayoutGrid,
   Maximize,
   MessageCircle,
   Monitor,
@@ -16,10 +27,15 @@ import {
   ShieldAlert,
   Video,
 } from "lucide-react";
-import type { Answer, ExamData } from "@/types/exam";
+import type { Answer } from "@/types/exam";
 import { useExamStore } from "@/stores/use-exam-store";
+import { useTranslation } from "react-i18next";
+import { MarkdownExamContent } from "@/components/exam/markdown-exam-content";
+import { isLeafAnswered } from "@/lib/exam-answer-utils";
+import { setExamLocale } from "@/i18n";
 
-interface ExamSidebarProps {
+export interface ExamTopNavProps {
+  examTitle: string;
   formatTime: (seconds: number) => string;
   progressPercent: number;
   answeredCount: number;
@@ -35,7 +51,66 @@ interface ExamSidebarProps {
   onSubmit: () => void;
 }
 
-export function ExamSidebar({
+/** Indices to show in compact strip: first, last, and window around current (deduped, sorted). */
+function compactQuestionIndices(globalIdx: number, total: number): number[] {
+  if (total <= 0) return [];
+  if (total <= 14) return Array.from({ length: total }, (_, i) => i);
+  const set = new Set<number>();
+  set.add(0);
+  set.add(total - 1);
+  const radius = 4;
+  for (let d = -radius; d <= radius; d++) {
+    const i = globalIdx + d;
+    if (i >= 0 && i < total) set.add(i);
+  }
+  return [...set].sort((a, b) => a - b);
+}
+
+function QuestionIndexButton({
+  idx,
+  isCurrent,
+  isAnswered,
+  isFlagged,
+  disabled,
+  compact,
+  title,
+  onSelect,
+}: {
+  idx: number;
+  isCurrent: boolean;
+  isAnswered: boolean;
+  isFlagged: boolean;
+  disabled: boolean;
+  compact: boolean;
+  title: string;
+  onSelect: () => void;
+}) {
+  const size = compact ? "h-7 min-w-7 text-[10px]" : "h-9 min-w-9 text-xs";
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onSelect}
+      title={title}
+      className={`
+        relative flex shrink-0 items-center justify-center rounded-md font-semibold transition-all
+        ${size}
+        ${isCurrent ? "ring-2 ring-primary ring-offset-1 ring-offset-background z-[1]" : ""}
+        ${isAnswered ? "bg-primary text-primary-foreground shadow-sm" : "bg-background text-muted-foreground border"}
+        hover:opacity-90 disabled:opacity-40
+      `}
+    >
+      {idx + 1}
+      {isFlagged && (
+        <Flag className="absolute -right-0.5 -top-0.5 h-2 w-2 fill-amber-400 text-amber-600" />
+      )}
+    </button>
+  );
+}
+
+/** Điều hướng câu hỏi + thời gian + nộp bài — nằm trên cùng màn hình thi. */
+export function ExamTopNav({
+  examTitle,
   formatTime,
   progressPercent,
   answeredCount,
@@ -49,78 +124,196 @@ export function ExamSidebar({
   violationsCount,
   submitting,
   onSubmit,
-}: ExamSidebarProps) {
+}: ExamTopNavProps) {
+  const { t, i18n } = useTranslation();
   const timeLeft = useExamStore((s) => s.timeLeft);
   const isTimeLow = timeLeft !== null && timeLeft <= 300;
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [navExpanded, setNavExpanded] = useState(true);
+
+  const stripIndices = useMemo(
+    () => compactQuestionIndices(globalIdx, totalQuestions),
+    [globalIdx, totalQuestions]
+  );
+
+  const renderPill = (idx: number) => {
+    const qid = allIds[idx]!;
+    return (
+      <QuestionIndexButton
+        key={qid}
+        idx={idx}
+        isCurrent={idx === globalIdx}
+        isAnswered={isLeafAnswered(answers.get(qid))}
+        isFlagged={flagged.has(qid)}
+        disabled={changingPage}
+        compact={totalQuestions > 14}
+        title={t("exam.question", { n: idx + 1 })}
+        onSelect={() => {
+          onGoToQuestion(idx);
+          setSheetOpen(false);
+        }}
+      />
+    );
+  };
 
   return (
-    <div className="w-72 border-r bg-card flex flex-col z-50 shadow-md">
-      <div className={`p-4 border-b ${isTimeLow ? "bg-destructive/10" : ""}`}>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium flex items-center gap-1">
-            <Clock className="h-4 w-4" />
-            Thời gian còn lại
+    <header className="z-50 shrink-0 border-b bg-card/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-card/80">
+      <div className="flex flex-wrap items-center gap-3 px-3 py-2 md:px-4">
+        <h1 className="min-w-0 max-w-[min(100%,14rem)] truncate text-sm font-semibold md:max-w-xs md:text-base">
+          {examTitle}
+        </h1>
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => setExamLocale(i18n.language.startsWith("vi") ? "en" : "vi")}
+          >
+            {i18n.language.startsWith("vi") ? "EN" : "VI"}
+          </Button>
+          <div
+            className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 font-mono text-sm tabular-nums ${
+              isTimeLow ? "border-destructive/50 bg-destructive/10 text-destructive" : "bg-muted/50"
+            }`}
+          >
+            <Clock className="h-3.5 w-3.5 shrink-0 opacity-70" />
+            <span className={isTimeLow ? "animate-pulse font-bold" : ""}>
+              {timeLeft !== null ? formatTime(timeLeft) : "--:--"}
+            </span>
+          </div>
+          <Button
+            variant="destructive"
+            size="sm"
+            className="h-8 shrink-0 font-semibold"
+            onClick={onSubmit}
+            disabled={submitting}
+          >
+            <Send className="mr-1.5 h-3.5 w-3.5" />
+            {submitting ? t("common.submitting") : t("common.submit")}
+          </Button>
+        </div>
+      </div>
+
+      <div className="border-t border-border/50 bg-muted/20 px-2 py-1.5 md:px-3">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="font-medium text-foreground">{t("exam.questionNav")}</span>
+            <Badge variant="outline" className="max-w-full truncate font-normal">
+              {t("exam.ofTotal", { current: globalIdx + 1, total: totalQuestions })}
+            </Badge>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-1.5 text-muted-foreground"
+              onClick={() => setNavExpanded((v) => !v)}
+              aria-expanded={navExpanded}
+              aria-label={navExpanded ? t("exam.collapseNav") : t("exam.expandNav")}
+            >
+              {navExpanded ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+            </Button>
+          </span>
+          <span className="shrink-0 text-right">
+            {t("exam.answered", { done: answeredCount, total: totalQuestions })}
+            {violationsCount > 0 && (
+              <span className="ml-2 text-destructive">
+                · {t("exam.violations", { count: violationsCount })}
+              </span>
+            )}
           </span>
         </div>
-        <p className={`text-2xl font-mono font-bold ${isTimeLow ? "text-destructive animate-pulse" : ""}`}>
-          {timeLeft !== null ? formatTime(timeLeft) : "--:--"}
-        </p>
-        <Progress value={progressPercent} className="mt-2" />
-        <p className="text-xs text-muted-foreground mt-1">
-          {answeredCount}/{totalQuestions} câu đã trả lời
-        </p>
+        <Progress value={progressPercent} className="mb-1.5 h-1" />
+
+        <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+          {!navExpanded ? (
+            <div className="flex items-center justify-center gap-2 py-1">
+              <SheetTrigger asChild>
+                <Button type="button" variant="secondary" size="sm" className="h-8 gap-1.5 shadow-sm">
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                  {t("exam.questionList")}
+                  <Badge variant="outline" className="ml-0.5 font-mono text-[10px]">
+                    {totalQuestions}
+                  </Badge>
+                </Button>
+              </SheetTrigger>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  disabled={globalIdx === 0 || changingPage}
+                  onClick={() => onGoToQuestion(globalIdx - 1)}
+                  aria-label={t("exam.prev")}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                  {stripIndices.map((idx, i) => {
+                    const prev = stripIndices[i - 1];
+                    const showEllipsis = i > 0 && prev !== undefined && idx - prev > 1;
+                    return (
+                      <span key={`wrap-${idx}`} className="flex items-center gap-1">
+                        {showEllipsis && (
+                          <span className="select-none px-0.5 text-[10px] text-muted-foreground">···</span>
+                        )}
+                        {renderPill(idx)}
+                      </span>
+                    );
+                  })}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  disabled={globalIdx >= totalQuestions - 1 || changingPage}
+                  onClick={() => onGoToQuestion(globalIdx + 1)}
+                  aria-label={t("exam.next")}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <SheetTrigger asChild>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-8 w-full shrink-0 gap-1.5 shadow-sm sm:w-auto"
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                  <span className="truncate">{t("exam.questionList")}</span>
+                </Button>
+              </SheetTrigger>
+            </div>
+          )}
+
+          <SheetContent side="bottom" className="h-[min(85dvh,32rem)] gap-0 rounded-t-xl p-0" showCloseButton>
+            <SheetHeader className="border-b px-4 py-3 text-left">
+              <SheetTitle>{t("exam.allQuestions")}</SheetTitle>
+            </SheetHeader>
+            <ScrollArea className="h-[calc(min(85dvh,32rem)-5.5rem)] px-3 pb-4">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(2rem,1fr))] gap-1.5 py-3 sm:grid-cols-[repeat(auto-fill,minmax(2.25rem,1fr))]">
+                {allIds.map((_, idx) => renderPill(idx))}
+              </div>
+            </ScrollArea>
+          </SheetContent>
+        </Sheet>
       </div>
-
-      <ScrollArea className="flex-1 p-4">
-        <div className="grid grid-cols-5 gap-2">
-          {allIds.map((qid, idx) => {
-            const isAnswered = answers.has(qid);
-            const isFlagged = flagged.has(qid);
-            const isCurrent = idx === globalIdx;
-
-            return (
-              <button
-                key={qid}
-                disabled={changingPage}
-                onClick={() => onGoToQuestion(idx)}
-                className={`
-                  relative h-10 w-10 rounded-lg text-sm font-medium transition-all
-                  ${isCurrent ? "ring-2 ring-primary scale-110" : ""}
-                  ${isAnswered ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}
-                  hover:scale-105 disabled:opacity-50 disabled:hover:scale-100
-                `}
-              >
-                {idx + 1}
-                {isFlagged && (
-                  <Flag className="absolute -top-1 -right-1 h-3 w-3 text-yellow-500 fill-yellow-500" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </ScrollArea>
-
-      {violationsCount > 0 && (
-        <div className="p-3 border-t bg-destructive/10">
-          <p className="text-xs text-destructive flex items-center gap-1">
-            <AlertTriangle className="h-3 w-3" />
-            Vi phạm nội quy: {violationsCount} lần
-          </p>
-        </div>
-      )}
-
-      <div className="p-4 border-t">
-        <Button className="w-full" variant="destructive" onClick={onSubmit} disabled={submitting}>
-          <Send className="h-4 w-4 mr-2" />
-          {submitting ? "Đang nộp..." : "Nộp bài"}
-        </Button>
-      </div>
-    </div>
+    </header>
   );
 }
 
 interface ExamMainContentProps {
-  data: ExamData;
   currentQuestion: any;
   globalIdx: number;
   totalQuestions: number;
@@ -129,14 +322,20 @@ interface ExamMainContentProps {
   onToggleFlag: (questionId: number) => void;
   onSelectOption: (questionId: number, optionId: number) => void;
   onEssayChange: (questionId: number, content: string) => void;
+  onShortAnswerChange: (questionId: number, content: string) => void;
+  onTrueFalseSelect: (questionId: number, value: boolean) => void;
+  onFillBlankChange: (questionId: number, slots: string[]) => void;
   answers: Map<number, Answer>;
   isBlurred: boolean;
   monitorWarning: string;
   onGoToQuestion: (idx: number) => void;
 }
 
+function questionTypeU(type: string): string {
+  return String(type ?? "").toUpperCase();
+}
+
 export function ExamMainContent({
-  data,
   currentQuestion,
   globalIdx,
   totalQuestions,
@@ -145,72 +344,173 @@ export function ExamMainContent({
   onToggleFlag,
   onSelectOption,
   onEssayChange,
+  onShortAnswerChange,
+  onTrueFalseSelect,
+  onFillBlankChange,
   answers,
   isBlurred,
   monitorWarning,
   onGoToQuestion,
 }: ExamMainContentProps) {
+  const { t } = useTranslation();
+  const qType = currentQuestion ? questionTypeU(currentQuestion.type) : "";
+
+  const fillSlots = (currentQuestion?.answers ?? currentQuestion?.options ?? []) as {
+    id: number;
+    content?: string;
+  }[];
+  const fillSlotValues: string[] = (() => {
+    const n = fillSlots.length;
+    const raw = answers.get(currentQuestion?.id)?.answer_content;
+    const base = Array.from({ length: n }, () => "");
+    if (!raw) return base;
+    try {
+      const j = JSON.parse(String(raw)) as unknown;
+      if (Array.isArray(j)) {
+        return Array.from({ length: n }, (_, i) => String(j[i] ?? ""));
+      }
+    } catch {
+      /* ignore */
+    }
+    return base;
+  })();
+
   return (
-    <div className="flex-1 flex flex-col relative overflow-hidden bg-muted/20">
-      <div className="flex items-center justify-between border-b p-4">
-        <h1 className="font-semibold">{data.exam.name ?? data.exam.title}</h1>
-        <div className="flex items-center gap-2">
-          {!changingPage && currentQuestion && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onToggleFlag(currentQuestion.id)}
-              className={flagged.has(currentQuestion.id) ? "text-yellow-600 border-yellow-600" : ""}
-            >
-              <Flag className={`h-4 w-4 mr-1 ${flagged.has(currentQuestion.id) ? "fill-yellow-500" : ""}`} />
-              {flagged.has(currentQuestion.id) ? "Bỏ đánh dấu" : "Đánh dấu"}
-            </Button>
-          )}
-          <Badge variant="secondary">Câu {globalIdx + 1} / {totalQuestions}</Badge>
-        </div>
+    <div className="flex flex-1 flex-col relative overflow-hidden bg-muted/15">
+      <div className="flex items-center justify-end gap-2 border-b border-border/60 bg-background/80 px-4 py-2">
+        {!changingPage && currentQuestion && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onToggleFlag(currentQuestion.id)}
+            className={flagged.has(currentQuestion.id) ? "border-amber-500/60 text-amber-700 dark:text-amber-400" : ""}
+          >
+            <Flag className={`h-4 w-4 mr-1 ${flagged.has(currentQuestion.id) ? "fill-amber-400" : ""}`} />
+            {flagged.has(currentQuestion.id) ? t("exam.unflag") : t("exam.flag")}
+          </Button>
+        )}
       </div>
 
-      <ScrollArea className="flex-1 p-6">
+      <ScrollArea className="flex-1 p-4 md:p-6">
         <div
-          className="max-w-3xl mx-auto"
+          className="mx-auto max-w-3xl"
           style={{
             userSelect: "none",
             WebkitUserSelect: "none",
-            pointerEvents: (isBlurred || monitorWarning !== "") ? "none" : "auto",
+            pointerEvents: isBlurred || monitorWarning !== "" ? "none" : "auto",
           }}
         >
           {changingPage || !currentQuestion ? (
-            <div className="flex justify-center items-center py-20 text-muted-foreground">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent mr-2" />
-              Đang chuyển trang...
+            <div className="flex items-center justify-center gap-2 py-20 text-muted-foreground">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              {t("exam.changingPage")}
             </div>
           ) : (
             <>
+              {currentQuestion.group_passage && (
+                <div className="mb-6 rounded-xl border border-border/80 bg-muted/20 p-4">
+                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {t("exam.readingPassage", { defaultValue: "Đoạn đọc" })}
+                  </p>
+                  <MarkdownExamContent>{currentQuestion.group_passage.content}</MarkdownExamContent>
+                  {currentQuestion.group_passage.image_url && (
+                    <img
+                      src={currentQuestion.group_passage.image_url}
+                      alt=""
+                      className="mt-4 max-w-full rounded-lg border"
+                      draggable={false}
+                    />
+                  )}
+                </div>
+              )}
+
               <div className="mb-6">
-                <h2 className="text-lg font-semibold text-primary mb-3">Câu {globalIdx + 1}</h2>
-                <div
-                  className="prose dark:prose-invert max-w-none prose-sm md:prose-base"
-                  dangerouslySetInnerHTML={{ __html: currentQuestion.content }}
-                />
+                <h2 className="mb-3 text-lg font-semibold text-primary">
+                  {t("exam.question", { n: globalIdx + 1 })}
+                </h2>
+                <MarkdownExamContent>{currentQuestion.content}</MarkdownExamContent>
                 {currentQuestion.image_url && (
                   <img
                     src={currentQuestion.image_url}
-                    alt="Question"
-                    className="max-w-full rounded-lg border mt-4"
+                    alt=""
+                    className="mt-4 max-w-full rounded-lg border"
                     draggable={false}
                   />
                 )}
               </div>
 
-              {currentQuestion.type === "essay" ? (
+              {qType === "ESSAY" && (
                 <textarea
-                  className="w-full min-h-[200px] rounded-lg border bg-background p-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-y"
-                  placeholder="Nhập câu trả lời của bạn..."
+                  className="min-h-[200px] w-full resize-y rounded-xl border bg-background p-4 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  placeholder={t("exam.essayPlaceholder")}
                   value={answers.get(currentQuestion.id)?.answer_content ?? ""}
                   onChange={(e) => onEssayChange(currentQuestion.id, e.target.value)}
                   style={{ userSelect: "text", WebkitUserSelect: "text" }}
                 />
-              ) : (
+              )}
+
+              {qType === "SHORT_ANSWER" && (
+                <input
+                  type="text"
+                  className="w-full rounded-xl border bg-background px-4 py-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  placeholder={t("exam.shortAnswerPlaceholder", { defaultValue: "Nhập câu trả lời ngắn…" })}
+                  value={answers.get(currentQuestion.id)?.answer_content ?? ""}
+                  onChange={(e) => onShortAnswerChange(currentQuestion.id, e.target.value)}
+                  style={{ userSelect: "text", WebkitUserSelect: "text" }}
+                />
+              )}
+
+              {qType === "TRUE_FALSE" && (
+                <div className="flex flex-wrap gap-3">
+                  {(
+                    [
+                      { v: true, label: t("review.trueLabel") },
+                      { v: false, label: t("review.falseLabel") },
+                    ] as const
+                  ).map(({ v, label }) => {
+                    const sel = answers.get(currentQuestion.id)?.answer_content === (v ? "true" : "false");
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => onTrueFalseSelect(currentQuestion.id, v)}
+                        className={`rounded-xl border px-6 py-3 text-sm font-medium transition-all ${
+                          sel
+                            ? "border-primary bg-primary/10 ring-2 ring-primary/25"
+                            : "border-border hover:bg-accent/50"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {qType === "MULTIPLE_FILL_IN_BLANK" && (
+                <div className="space-y-3">
+                  {fillSlots.map((slot, si) => (
+                    <div key={slot.id ?? si} className="flex flex-col gap-1">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {t("exam.blankN", { n: si + 1, defaultValue: `Ô ${si + 1}` })}
+                      </span>
+                      <input
+                        type="text"
+                        className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+                        value={fillSlotValues[si] ?? ""}
+                        onChange={(e) => {
+                          const next = [...fillSlotValues];
+                          next[si] = e.target.value;
+                          onFillBlankChange(currentQuestion.id, next);
+                        }}
+                        style={{ userSelect: "text", WebkitUserSelect: "text" }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {qType === "MULTIPLE_CHOICE" && (
                 <div className="space-y-3">
                   {(currentQuestion.options ?? currentQuestion.answers ?? []).map((option: any, oi: number) => {
                     const isSelected = String(answers.get(currentQuestion.id)?.answer_id) === String(option.id);
@@ -219,12 +519,14 @@ export function ExamMainContent({
                     return (
                       <button
                         key={option.id}
+                        type="button"
                         onClick={() => onSelectOption(currentQuestion.id, option.id)}
                         className={`
-                          w-full flex items-start gap-3 rounded-lg border p-4 text-left transition-all
-                          ${isSelected
-                            ? "border-primary bg-primary/5 ring-2 ring-primary/20"
-                            : "border-border hover:border-primary/50 hover:bg-accent/50"
+                          flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-all
+                          ${
+                            isSelected
+                              ? "border-primary bg-primary/5 ring-2 ring-primary/20 shadow-sm"
+                              : "border-border hover:border-primary/40 hover:bg-accent/40"
                           }
                         `}
                       >
@@ -236,12 +538,11 @@ export function ExamMainContent({
                         >
                           {isSelected && <div className="h-2.5 w-2.5 rounded-full bg-primary" />}
                         </div>
-                        <div>
-                          <span className="font-medium text-sm block mb-1">{label}.</span>{" "}
-                          <div
-                            className="text-sm prose dark:prose-invert max-w-none inline-block mt-0"
-                            dangerouslySetInnerHTML={{ __html: String(option.content) }}
-                          />
+                        <div className="min-w-0 flex-1">
+                          <span className="mb-1 block text-sm font-semibold">{label}.</span>
+                          <MarkdownExamContent className="text-sm">
+                            {String(option.content)}
+                          </MarkdownExamContent>
                         </div>
                       </button>
                     );
@@ -253,22 +554,22 @@ export function ExamMainContent({
         </div>
       </ScrollArea>
 
-      <div className="flex items-center justify-between border-t p-4">
+      <div className="flex items-center justify-between gap-2 border-t bg-background/90 px-4 py-3">
         <Button
           variant="outline"
           onClick={() => onGoToQuestion(globalIdx - 1)}
           disabled={globalIdx === 0 || changingPage}
         >
-          <ChevronLeft className="h-4 w-4 mr-1" />
-          Câu trước
+          <ChevronLeft className="mr-1 h-4 w-4" />
+          {t("exam.prev")}
         </Button>
         <Button
           variant="outline"
           onClick={() => onGoToQuestion(globalIdx + 1)}
           disabled={globalIdx === totalQuestions - 1 || changingPage}
         >
-          Câu sau
-          <ChevronRight className="h-4 w-4 ml-1" />
+          {t("exam.next")}
+          <ChevronRight className="ml-1 h-4 w-4" />
         </Button>
       </div>
     </div>
@@ -405,6 +706,7 @@ export function ExamStatusBar({
   onChatToggle,
   unreadCount = 0,
 }: ExamStatusBarProps) {
+  const { t } = useTranslation();
   return (
     <div className="h-7 bg-card border-t shrink-0 flex items-center px-4 justify-between z-40 text-xs text-muted-foreground font-mono">
       <div className="flex gap-4">
@@ -442,7 +744,7 @@ export function ExamStatusBar({
         )}
       </div>
       <div className="flex items-center gap-3">
-        <span>Hệ thống giám sát thi KLTN</span>
+        <span>{t("brand.name")}</span>
         {onChatToggle && (
           <button
             onClick={onChatToggle}

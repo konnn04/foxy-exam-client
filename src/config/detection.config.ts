@@ -72,6 +72,22 @@ export const MONITORING_THRESHOLDS = {
   NULL_FACE_THRESHOLD: 15,
 };
 
+// ─── Mouth / Talking Detection ──────────────────────────────────────
+
+export const MOUTH_DETECTION = {
+  JAW_OPEN_THRESHOLD: 0.25,
+  HISTORY_FRAMES: 15,
+  VARIANCE_THRESHOLD: 0.005,
+  SUSTAINED_MS: 2000,
+  LOG_COOLDOWN_MS: 15000,
+};
+
+// ─── Face Event Logging ──────────────────────────────────────────────
+
+export const FACE_EVENT_LOG = {
+  COOLDOWN_MS: 10000,
+};
+
 // ─── Liveness Detection ──────────────────────────────────────────────────
 
 export const LIVENESS_CONFIG = {

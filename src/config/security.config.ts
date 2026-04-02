@@ -36,6 +36,11 @@ export const NO_LOCKSCREEN_WHEN_DEV_MODE = DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_D
 
 export const OFFLINE_MODE_FEATURE_ENABLED = true;
 
+/**
+ * When false, violation POST is metadata-only; supervisor-agent attaches cam/screen from LiveKit.
+ */
+export const ATTACH_CLIENT_VIOLATION_SNAPSHOTS = false;
+
 // Exam lockdown configuration
 export const EXAM_LOCKDOWN = {
   // Blocked keyboard shortcuts (prevented key combinations)

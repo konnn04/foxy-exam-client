@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { AlertTriangle, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ const RETRY_DELAYS = CONNECTION_RECOVERY_TIMING.RETRY_DELAYS_SECONDS;
 const MAX_AUTO_RETRIES = CONNECTION_RECOVERY_TIMING.MAX_AUTO_RETRIES;
 
 export default function DisconnectedPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -38,10 +40,7 @@ export default function DisconnectedPage() {
   const canAutoRetry = retryIndex < MAX_AUTO_RETRIES;
   const currentDelay = RETRY_DELAYS[Math.min(retryIndex, RETRY_DELAYS.length - 1)];
   const progress = useMemo(() => {
-    if (!canAutoRetry) {
-      return 100;
-    }
-
+    if (!canAutoRetry) return 100;
     const elapsed = currentDelay - countdown;
     return Math.max(0, Math.min(100, Math.round((elapsed / currentDelay) * 100)));
   }, [canAutoRetry, countdown, currentDelay]);
@@ -49,13 +48,8 @@ export default function DisconnectedPage() {
   useEffect(() => {
     sessionStorage.setItem(SESSION_KEYS.DISCONNECTED_RETRY_COUNT, String(retryIndex));
 
-    const handleOnline = () => {
-      setIsOnline(true);
-    };
-
-    const handleOffline = () => {
-      setIsOnline(false);
-    };
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
 
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
@@ -67,19 +61,12 @@ export default function DisconnectedPage() {
   }, []);
 
   useEffect(() => {
-    if (!canAutoRetry) {
-      return;
-    }
+    if (!canAutoRetry) return;
 
     setCountdown(currentDelay);
 
     const tickTimer = window.setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          return 0;
-        }
-        return prev - 1;
-      });
+      setCountdown((prev) => (prev <= 1 ? 0 : prev - 1));
     }, 1000);
 
     const retryTimer = window.setTimeout(async () => {
@@ -129,7 +116,6 @@ export default function DisconnectedPage() {
       window.electronAPI.quitApp();
       return;
     }
-
     window.close();
   };
 
@@ -151,13 +137,13 @@ export default function DisconnectedPage() {
               {isOnline ? <Wifi className="h-6 w-6" /> : <WifiOff className="h-6 w-6" />}
             </div>
             <div>
-              <CardTitle className="text-2xl">Mất kết nối đến máy chủ</CardTitle>
+              <CardTitle className="text-2xl">{t("disconnected.title")}</CardTitle>
               <CardDescription>
                 {isOnline
-                  ? "Đã có mạng trở lại, đang thử khôi phục phiên làm việc."
+                  ? t("disconnected.descOnline")
                   : isOfflineModeEnabled
-                    ? "Không thể kết nối. Hệ thống sẽ tự động thử lại, hoặc bạn có thể vào chế độ ngoại tuyến."
-                    : "Không thể kết nối. Hệ thống sẽ tự động thử lại."}
+                    ? t("disconnected.descOfflineMode")
+                    : t("disconnected.descOffline")}
               </CardDescription>
             </div>
           </div>
@@ -166,7 +152,7 @@ export default function DisconnectedPage() {
         <CardContent className="space-y-5">
           <div className="space-y-2 rounded-lg border border-border/60 bg-muted/40 p-4">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Tự động thử lại</span>
+              <span className="text-muted-foreground">{t("disconnected.autoRetry")}</span>
               <span className="font-medium">{Math.min(retryIndex + 1, MAX_AUTO_RETRIES)} / {MAX_AUTO_RETRIES}</span>
             </div>
 
@@ -174,13 +160,13 @@ export default function DisconnectedPage() {
               <>
                 <Progress value={progress} className="h-2" />
                 <p className="text-sm text-muted-foreground">
-                  Tự reload sau {countdown}s (lần kế tiếp: {currentDelay}s)
+                  {t("disconnected.retryCountdown", { seconds: countdown, delay: currentDelay })}
                 </p>
               </>
             ) : (
               <div className="flex items-start gap-2 text-sm text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="mt-0.5 h-4 w-4" />
-                <p>Đã thử tự động 3 lần nhưng chưa thành công. Vui lòng thử lại thủ công.</p>
+                <p>{t("disconnected.retryFailed")}</p>
               </div>
             )}
           </div>
@@ -189,22 +175,22 @@ export default function DisconnectedPage() {
             {!canAutoRetry ? (
               <Button onClick={handleManualRetry} variant="default" className="w-full" disabled={isManualRetrying}>
                 <RefreshCw className={`mr-2 h-4 w-4 ${isManualRetrying ? 'animate-spin' : ''}`} />
-                {isManualRetrying ? 'Đang kiểm tra...' : 'Thử lại thủ công'}
+                {isManualRetrying ? t("disconnected.retrying") : t("disconnected.manualRetry")}
               </Button>
             ) : (
               <Button variant="outline" className="w-full" disabled>
                 <RefreshCw className="mr-2 h-4 w-4" />
-                Đang tự động thử lại...
+                {t("disconnected.autoRetrying")}
               </Button>
             )}
 
             {isOfflineModeEnabled ? (
               <Button onClick={handleContinueOfflineMode} variant="secondary" className="w-full">
-                Tiếp tục chế độ ngoại tuyến
+                {t("disconnected.offlineMode")}
               </Button>
             ) : (
               <Button onClick={handleExitApp} variant="secondary" className="w-full">
-                Thoát ứng dụng
+                {t("disconnected.exitApp")}
               </Button>
             )}
           </div>

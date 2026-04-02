@@ -31,6 +31,13 @@ export const subscribeToWebRTCSignals = (userId: number|string, onSignal: (signa
   return channel;
 };
 
+export const subscribeToFaceLock = (userId: number|string, onFaceLock: (data: any) => void) => {
+  const echo = connectExamSocket();
+  const channel = echo.private(CHANNEL_NAMES.SIGNALING(userId));
+  channel.listen(BROADCAST_EVENTS.FACE_LOCK, onFaceLock);
+  return channel;
+};
+
 export const unsubscribeFromWebRTCSignals = (userId: number|string) => {
   const echo = socket.getInstance();
   if (echo) echo.leave(CHANNEL_NAMES.SIGNALING(userId));

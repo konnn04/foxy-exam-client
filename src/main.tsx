@@ -1,5 +1,6 @@
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import "@/i18n";
 import App from "./App";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { AlertDialogProvider } from "@/components/providers/alert-dialog-provider";

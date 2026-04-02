@@ -86,6 +86,14 @@ export function EnvironmentCheck({ config, stream, onSuccess, onCancel }: Enviro
     return () => clearInterval(interval);
   }, [config]);
 
+  // No local stream (e.g. mobile camera relay only): skip mic gate and finish.
+  useEffect(() => {
+    if (envScanDone && !stream) {
+      setScanStatus('Bỏ qua kiểm tra mic (không có luồng âm thanh cục bộ).');
+      setIsDone(true);
+    }
+  }, [envScanDone, stream]);
+
   // Mic volume monitoring (starts after env scan done)
   useEffect(() => {
     if (!envScanDone || !stream) return;

@@ -15,6 +15,10 @@ declare global {
       stopGlobalHook: () => void;
       setAlwaysOnTop: (isTop: boolean) => void;
       setFullScreen: (isFull: boolean) => void;
+      /** Main process: always-on-top off + native fullscreen off (await before navigate). */
+      resetExamWindowState?: () => Promise<void>;
+      /** Optional stable machine id from Electron main (if implemented). */
+      getMachineId?: () => Promise<string>;
       quitApp: () => void;
       onGlobalHookEvent: (callback: (event: any, data: any) => void) => void;
       offGlobalHookEvent: (callback: (event: any, data: any) => void) => void;

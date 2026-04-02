@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import api from "@/lib/api";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import {
@@ -26,9 +27,15 @@ interface Attempt {
   id: number;
   exam_id: number;
   exam_title?: string;
-  exam?: { id: number; title: string; allow_review?: boolean };
+  exam?: {
+    id: number;
+    title?: string;
+    name?: string;
+    allow_review?: boolean;
+    configuration?: { is_allow_review?: boolean };
+  };
   status: string;
-  score?: number;
+  score?: number | null;
   total_score?: number;
   started_at: string;
   submitted_at?: string;
@@ -41,6 +48,7 @@ interface PaginationMeta {
 }
 
 export default function HistoryPage() {
+  const { t } = useTranslation();
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [meta, setMeta] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -52,11 +60,22 @@ export default function HistoryPage() {
     (async () => {
       setLoading(true);
       try {
-        const res = await api.get("/student/history", { params: { page } });
-        setAttempts(res.data.data ?? res.data.attempts ?? res.data);
-        setMeta(res.data.meta ?? null);
+        const res = await api.get("/student/history", {
+          params: { page, per_page: 50 },
+        });
+        const d = res.data;
+        const rows = Array.isArray(d.data) ? d.data : Array.isArray(d.attempts) ? d.attempts : [];
+        setAttempts(rows);
+        // Laravel paginator: flat keys; some APIs use meta.{}
+        setMeta(
+          d.meta ?? {
+            current_page: d.current_page ?? page,
+            last_page: d.last_page ?? 1,
+            total: d.total ?? rows.length,
+          },
+        );
       } catch {
-        toast.error("Không thể tải lịch sử thi");
+        toast.error(t("history.loadError"));
       } finally {
         setLoading(false);
       }
@@ -64,18 +83,20 @@ export default function HistoryPage() {
   }, [page]);
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
+    const s = (status || "").toLowerCase();
+    switch (s) {
       case "submitted":
       case "completed":
         return (
           <Badge variant="default" className="gap-1">
-            <CheckCircle className="h-3 w-3" /> Đã nộp
+            <CheckCircle className="h-3 w-3" /> {t("history.statusSubmitted")}
           </Badge>
         );
       case "in_progress":
+      case "in progress":
         return (
           <Badge variant="secondary" className="gap-1">
-            <Clock className="h-3 w-3" /> Đang làm
+            <Clock className="h-3 w-3" /> {t("history.statusInProgress")}
           </Badge>
         );
       default:
@@ -99,53 +120,60 @@ export default function HistoryPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Lịch sử thi</h1>
-        <p className="text-muted-foreground">
-          Tất cả các lần thi của bạn
-        </p>
+        <h1 className="text-2xl font-bold tracking-tight">{t("history.title")}</h1>
+        <p className="text-muted-foreground">{t("history.subtitle")}</p>
       </div>
 
       {!attempts.length ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <History className="h-12 w-12 mb-3 text-muted-foreground opacity-50" />
-            <p className="text-muted-foreground">
-              Chưa có lịch sử thi nào
-            </p>
+            <p className="text-muted-foreground">{t("history.noHistory")}</p>
           </CardContent>
         </Card>
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Kết quả thi</CardTitle>
+            <CardTitle className="text-base">{t("history.results")}</CardTitle>
             <CardDescription>
-              Tổng cộng {meta?.total ?? attempts.length} lượt thi
+              {t("history.totalAttempts", { count: meta?.total ?? attempts.length })}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Bài thi</TableHead>
-                  <TableHead>Trạng thái</TableHead>
-                  <TableHead>Điểm</TableHead>
-                  <TableHead>Ngày thi</TableHead>
-                  <TableHead className="text-right">Hành động</TableHead>
+                  <TableHead>{t("history.colExam")}</TableHead>
+                  <TableHead>{t("history.colStatus")}</TableHead>
+                  <TableHead>{t("history.colScore")}</TableHead>
+                  <TableHead>{t("history.colDate")}</TableHead>
+                  <TableHead className="text-right">{t("history.colActions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {attempts.map((attempt) => {
                   const examId = attempt.exam_id ?? attempt.exam?.id;
                   const examTitle =
-                    attempt.exam_title ?? attempt.exam?.title ?? `Exam #${examId}`;
-                  const allowReview = attempt.exam?.allow_review !== false;
+                    attempt.exam_title ??
+                    attempt.exam?.name ??
+                    attempt.exam?.title ??
+                    `Exam #${examId}`;
+                  const cfg = attempt.exam?.configuration;
+                  const allowReview =
+                    cfg?.is_allow_review === true ||
+                    attempt.exam?.allow_review === true;
+                  const st = (attempt.status || "").toLowerCase();
+                  const isSubmitted =
+                    Boolean(attempt.submitted_at) ||
+                    st === "submitted" ||
+                    st === "completed";
 
                   return (
                     <TableRow key={attempt.id}>
                       <TableCell className="font-medium">{examTitle}</TableCell>
                       <TableCell>{getStatusBadge(attempt.status)}</TableCell>
                       <TableCell>
-                        {attempt.score !== undefined
+                        {attempt.score !== undefined && attempt.score !== null
                           ? `${attempt.score}${attempt.total_score ? ` / ${attempt.total_score}` : ""}`
                           : "—"}
                       </TableCell>
@@ -155,22 +183,16 @@ export default function HistoryPage() {
                           : new Date(attempt.started_at).toLocaleString("vi-VN")}
                       </TableCell>
                       <TableCell className="text-right">
-                        {(attempt.status === "submitted" ||
-                          attempt.status === "completed") &&
-                          allowReview && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() =>
-                                navigate(
-                                  `/exams/${examId}/review/${attempt.id}`
-                                )
-                              }
-                            >
-                              <Eye className="h-3.5 w-3.5 mr-1" />
-                              Xem lại
-                            </Button>
-                          )}
+                        {isSubmitted && allowReview && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => navigate(`/exams/${examId}/review/${attempt.id}`)}
+                          >
+                            <Eye className="h-3.5 w-3.5 mr-1" />
+                            {t("history.review")}
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   );
@@ -181,27 +203,16 @@ export default function HistoryPage() {
         </Card>
       )}
 
-      {}
       {meta && meta.last_page > 1 && (
         <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            Trước
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+            {t("common.prev")}
           </Button>
           <span className="text-sm text-muted-foreground">
-            Trang {page} / {meta.last_page}
+            {t("common.page", { current: page, total: meta.last_page })}
           </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page >= meta.last_page}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Sau
+          <Button variant="outline" size="sm" disabled={page >= meta.last_page} onClick={() => setPage((p) => p + 1)}>
+            {t("common.next")}
           </Button>
         </div>
       )}

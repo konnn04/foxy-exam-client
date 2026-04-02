@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { useEffect, useRef } from "react";
-import { connectExamSocket, joinExamRoom, leaveExamRoom, subscribeToWebRTCSignals, unsubscribeFromWebRTCSignals, listenToConnectionEvents } from "@/sockets/exam.socket";
+import { connectExamSocket, joinExamRoom, leaveExamRoom, subscribeToWebRTCSignals, subscribeToFaceLock, unsubscribeFromWebRTCSignals, listenToConnectionEvents } from "@/sockets/exam.socket";
 import { socket } from "@/sockets/socket";
 import { examMonitorService } from "@/services/exam-monitor.service";
 import { proctorService } from "@/services/proctor.service";
@@ -12,6 +12,12 @@ interface ExamEvent {
   client_timestamp?: string;
 }
 
+interface DeviceLockData {
+  fingerprint: string;
+  checksum: string;
+  timestamp: number;
+}
+
 interface ExamSocketStore {
   examId: number | null;
   attemptId: number | null;
@@ -19,8 +25,8 @@ interface ExamSocketStore {
   isConnected: boolean;
   eventBuffer: ExamEvent[];
   lastEventTime: Record<string, number>;
+  deviceLock: DeviceLockData | null;
   
-  // Handlers for outside consumers to subscribe to events
   onDisconnectCallbacks: (() => void)[];
   onReconnectCallbacks: (() => void)[];
   onEventCallbacks: ((event: any) => void)[];
@@ -28,6 +34,7 @@ interface ExamSocketStore {
 
   setConnected: (status: boolean) => void;
   initSession: (examId: number, attemptId: number) => void;
+  setDeviceLock: (data: DeviceLockData) => void;
   clearSession: () => void;
   
   logEvent: (type: string, data?: Record<string, any>) => void;
@@ -54,10 +61,13 @@ export const useExamSocketStore = create<ExamSocketStore>((set, get) => ({
   onReconnectCallbacks: [],
   onEventCallbacks: [],
   onViolationCallbacks: [],
+  deviceLock: null,
   
   setConnected: (status) => set({ isConnected: status }),
   
   initSession: (examId, attemptId) => set({ examId, attemptId }),
+  
+  setDeviceLock: (data) => set({ deviceLock: data }),
   
   clearSession: () => set({ 
     examId: null, 
@@ -68,6 +78,7 @@ export const useExamSocketStore = create<ExamSocketStore>((set, get) => ({
     onReconnectCallbacks: [],
     onEventCallbacks: [],
     onViolationCallbacks: [],
+    deviceLock: null,
   }),
   
   logEvent: (type, data = {}) => {
@@ -91,14 +102,19 @@ export const useExamSocketStore = create<ExamSocketStore>((set, get) => ({
   },
   
   flush: async () => {
-    const { examId, attemptId, eventBuffer, sessionId } = get();
+    const { examId, attemptId, eventBuffer, sessionId, deviceLock } = get();
     if (eventBuffer.length === 0 || !examId || !attemptId) return;
     
-    set({ eventBuffer: [] }); // Clear buffer optimistically
+    set({ eventBuffer: [] });
     try {
-      await examMonitorService.flushEvents(examId, { attempt_id: attemptId, events: eventBuffer }, sessionId);
+      const payload: Record<string, unknown> = { attempt_id: attemptId, events: eventBuffer };
+      if (deviceLock) {
+        payload.device_fingerprint = deviceLock.fingerprint;
+        payload.device_checksum = deviceLock.checksum;
+        payload.device_timestamp = deviceLock.timestamp;
+      }
+      await examMonitorService.flushEvents(examId, payload, sessionId);
     } catch {
-      // Revert if failed (add back the buffered events)
       set((state) => ({ eventBuffer: [...eventBuffer, ...state.eventBuffer] }));
     }
   },
@@ -158,6 +174,9 @@ export function useExamSocket(examId?: number | string | null, attemptId?: numbe
     if (userId) {
       subscribeToWebRTCSignals(userId, (signal: any) => {
         window.dispatchEvent(new CustomEvent('webrtc-signal', { detail: signal }));
+      });
+      subscribeToFaceLock(userId, (data: any) => {
+        window.dispatchEvent(new CustomEvent('face-lock', { detail: data }));
       });
     }
 
