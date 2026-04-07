@@ -96,6 +96,7 @@ export function CameraOrientationCheck({ stream, onSuccess, onCancel }: CameraOr
     }
 
     let looking = false;
+    let hasFreshEvaluation = false;
     let debugPitch = 0, debugYaw = 0;
 
     const now = performance.now();
@@ -107,6 +108,7 @@ export function CameraOrientationCheck({ stream, onSuccess, onCancel }: CameraOr
 
     if (video.currentTime !== lastVideoTimeRef.current) {
       lastVideoTimeRef.current = video.currentTime;
+      hasFreshEvaluation = true;
       const results = faceLandmarkerRef.current.detectForVideo(video, performance.now());
       
       const canvas = canvasRef.current;
@@ -161,16 +163,19 @@ export function CameraOrientationCheck({ stream, onSuccess, onCancel }: CameraOr
       }
     }
 
-    // Smoothing logic
-    if (looking) {
-      lookingCounterRef.current = Math.min(lookingCounterRef.current + 1, LOOKING_CONFIRM_FRAMES + 1);
-      if (lookingCounterRef.current >= LOOKING_CONFIRM_FRAMES) {
-        setIsLookingAtCamera(true);
-      }
-    } else {
-      lookingCounterRef.current = Math.max(lookingCounterRef.current - 1, -(NOT_LOOKING_CONFIRM_FRAMES + 1));
-      if (lookingCounterRef.current <= -NOT_LOOKING_CONFIRM_FRAMES) {
-        setIsLookingAtCamera(false);
+    // Important: update smoothing ONLY when a fresh frame is evaluated.
+    // Otherwise rAF runs faster than camera fps and can create false "not looking".
+    if (hasFreshEvaluation) {
+      if (looking) {
+        lookingCounterRef.current = Math.min(lookingCounterRef.current + 1, LOOKING_CONFIRM_FRAMES + 1);
+        if (lookingCounterRef.current >= LOOKING_CONFIRM_FRAMES) {
+          setIsLookingAtCamera(true);
+        }
+      } else {
+        lookingCounterRef.current = Math.max(lookingCounterRef.current - 1, -(NOT_LOOKING_CONFIRM_FRAMES + 1));
+        if (lookingCounterRef.current <= -NOT_LOOKING_CONFIRM_FRAMES) {
+          setIsLookingAtCamera(false);
+        }
       }
     }
 

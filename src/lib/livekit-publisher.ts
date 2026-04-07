@@ -52,6 +52,7 @@ class LiveKitPublisher {
    * Poll until supervisor-agent refreshed Laravel cache for this room (no config/heartbeat spam).
    */
   private async waitForSupervisorAgentInRoom(
+    examId: number,
     attemptId: number,
     maxWaitMs = 180_000,
     pollMs = 2_500,
@@ -59,7 +60,7 @@ class LiveKitPublisher {
     const deadline = Date.now() + maxWaitMs;
     while (Date.now() < deadline) {
       try {
-        const res = await api.get(`/student/exams/${this.examId}/proctor/agent-in-room`, {
+        const res = await api.get(`/student/exams/${examId}/proctor/agent-in-room`, {
           params: { attempt_id: attemptId },
         });
         if (res.data?.gating_disabled === true || res.data?.agent_in_room === true) {
@@ -106,7 +107,7 @@ class LiveKitPublisher {
         config.attemptId != null &&
         !this.hasRoomPresenceOk(config.examId, config.attemptId)
       ) {
-        const inRoom = await this.waitForSupervisorAgentInRoom(config.attemptId);
+        const inRoom = await this.waitForSupervisorAgentInRoom(config.examId, config.attemptId);
         if (!inRoom) {
           this.onError?.(
             "Giám sát AI chưa vào phòng thi. Vui lòng đợi thêm hoặc liên hệ giám thị.",
@@ -148,7 +149,7 @@ class LiveKitPublisher {
         config.attemptId != null &&
         !this.hasRoomPresenceOk(config.examId, config.attemptId)
       ) {
-        const inRoom = await this.waitForSupervisorAgentInRoom(config.attemptId);
+        const inRoom = await this.waitForSupervisorAgentInRoom(config.examId, config.attemptId);
         if (!inRoom) {
           this.disconnect();
           this.onError?.(
@@ -356,6 +357,20 @@ class LiveKitPublisher {
     console.warn(
       "[LiveKitPublisher] requestAgentSnapshots: room not connected after retries; agent snapshots skipped",
     );
+  }
+
+  /**
+   * Publish telemetry data to the supervisor-agent via DataChannel.
+   * Used by TelemetryPublisher to send raw client events.
+   */
+  async publishTelemetry(data: Uint8Array, topic: string): Promise<void> {
+    if (!this.room || this.room.state !== ConnectionState.Connected) {
+      throw new Error("Not connected to LiveKit room");
+    }
+    await this.room.localParticipant.publishData(data, {
+      reliable: true,
+      topic,
+    });
   }
 
   /**

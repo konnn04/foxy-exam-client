@@ -4,6 +4,7 @@ import { connectExamSocket, joinExamRoom, leaveExamRoom, subscribeToWebRTCSignal
 import { socket } from "@/sockets/socket";
 import { examMonitorService } from "@/services/exam-monitor.service";
 import { proctorService } from "@/services/proctor.service";
+import { telemetryPublisher } from "@/lib/telemetry-publisher";
 import { STORAGE_KEYS, EVENT_FLUSHING } from "@/config";
 
 interface ExamEvent {
@@ -81,42 +82,20 @@ export const useExamSocketStore = create<ExamSocketStore>((set, get) => ({
     deviceLock: null,
   }),
   
+  /**
+   * @deprecated Events now go via LiveKit DataChannel (telemetryPublisher).
+   * This method forwards to telemetryPublisher for backward compat.
+   */
   logEvent: (type, data = {}) => {
-    const { eventBuffer, lastEventTime, flush } = get();
-    const now = Date.now();
-    const lastTime = lastEventTime[type] ?? 0;
-    
-    // Dedup: skip if same event type was logged within 3 seconds
-    if (now - lastTime < 3000) return;
-    
-    const newBuffer = [...eventBuffer, { type, data, client_timestamp: new Date().toISOString() }];
-    set({
-      lastEventTime: { ...lastEventTime, [type]: now },
-      eventBuffer: newBuffer
-    });
-    
-    // Flush if buffer is full
-    if (newBuffer.length >= EVENT_FLUSHING.BUFFER_SIZE_THRESHOLD) {
-      flush();
-    }
+    // Forward to telemetry publisher (LiveKit DataChannel → Agent)
+    telemetryPublisher.send(type, data);
   },
   
+  /**
+   * @deprecated No longer flushes to REST. Events go via LiveKit DataChannel.
+   */
   flush: async () => {
-    const { examId, attemptId, eventBuffer, sessionId, deviceLock } = get();
-    if (eventBuffer.length === 0 || !examId || !attemptId) return;
-    
-    set({ eventBuffer: [] });
-    try {
-      const payload: Record<string, unknown> = { attempt_id: attemptId, events: eventBuffer };
-      if (deviceLock) {
-        payload.device_fingerprint = deviceLock.fingerprint;
-        payload.device_checksum = deviceLock.checksum;
-        payload.device_timestamp = deviceLock.timestamp;
-      }
-      await examMonitorService.flushEvents(examId, payload, sessionId);
-    } catch {
-      set((state) => ({ eventBuffer: [...eventBuffer, ...state.eventBuffer] }));
-    }
+    // No-op: events are flushed by telemetryPublisher every 1s via LiveKit
   },
 
   sendSignal: async (signalType, data, toUserId) => {
@@ -180,20 +159,30 @@ export function useExamSocket(examId?: number | string | null, attemptId?: numbe
       });
     }
 
+    const emitWhenTelemetryReady = (type: string, data: Record<string, any> = {}, retry = 0) => {
+      if (telemetryPublisher.isStarted) {
+        telemetryPublisher.send(type, data);
+        return;
+      }
+      if (retry >= 10) return;
+      window.setTimeout(() => emitWhenTelemetryReady(type, data, retry + 1), 200);
+    };
+
     const unbind = listenToConnectionEvents(
       () => {
         store.setConnected(true);
-        store.logEvent('reconnected', {});
+        emitWhenTelemetryReady('connection_restored', {});
         store.onReconnectCallbacks.forEach(cb => cb());
       },
       () => {
         store.setConnected(false);
+        emitWhenTelemetryReady('disconnected', {});
         store.onDisconnectCallbacks.forEach(cb => cb());
       },
       (err) => console.error('[ExamSocket] Connection Error:', err)
     );
 
-    store.logEvent('connected', { sessionId: store.sessionId });
+    emitWhenTelemetryReady('connected', { sessionId: store.sessionId });
     mounted.current = true;
     
     // Auto flush
@@ -204,7 +193,7 @@ export function useExamSocket(examId?: number | string | null, attemptId?: numbe
     return () => {
       clearInterval(flushInterval);
       mounted.current = false;
-      store.logEvent('disconnected', { sessionId: store.sessionId });
+      emitWhenTelemetryReady('connection_lost', { sessionId: store.sessionId });
       
       // Attempt to flush last events
       store.flush();

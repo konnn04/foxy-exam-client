@@ -38,7 +38,6 @@ export function ExamPrecheck({
   const { t } = useTranslation();
 
   const [wizardPhase, setWizardPhase] = useState<number>(0);
-  const [skipMediaPrecheck, setSkipMediaPrecheck] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [mobileRelayOnly, setMobileRelayOnly] = useState(false);
   const [config, setConfig] = useState<ExamTrackingConfig | null>(null);
@@ -52,9 +51,44 @@ export function ExamPrecheck({
     }
 
     try {
+      // WebRTC constraints
       const fps = proctorConfig?.client_stream?.screen?.fps || 5;
       const height = proctorConfig?.client_stream?.screen?.height || 1080;
 
+      // 1) Electron-specific capture (bypasses browser picker & selects targeted monitor)
+      if (window.electronAPI?.getScreenSourceId) {
+        // Pick the exact monitor that currently contains the exam window.
+        const displayInfo = await window.electronAPI.getDisplayId?.();
+        let sourceId: string | null = null;
+
+        for (let i = 0; i < 3; i++) {
+          sourceId = await window.electronAPI.getScreenSourceId(displayInfo?.id);
+          if (sourceId) break;
+          await new Promise((r) => setTimeout(r, 180));
+        }
+
+        if (sourceId) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: {
+                mandatory: {
+                  chromeMediaSource: "desktop",
+                  chromeMediaSourceId: sourceId,
+                  maxFrameRate: fps,
+                  maxHeight: height
+                }
+              } as any
+            });
+            // If we successfully get a stream this way, return it immediately.
+            return stream;
+          } catch (electronMediaErr) {
+            console.warn("Electron getUserMedia fallback needed:", electronMediaErr);
+          }
+        }
+      }
+
+      // 2) Standard Web/Fallback capture
       const displayOptions = {
         video: {
           displaySurface: "monitor" as const,
@@ -127,13 +161,6 @@ export function ExamPrecheck({
           }
         }
 
-        const light =
-          remoteConfig.level === "none" &&
-          !remoteConfig.requireCamera &&
-          !remoteConfig.detectBannedApps &&
-          !remoteConfig.requireFaceAuth;
-
-        setSkipMediaPrecheck(light);
         setWizardPhase(1);
       } catch (err) {
         console.error("Lỗi lấy cấu hình bài thi:", err);
@@ -144,21 +171,28 @@ export function ExamPrecheck({
 
   const handleConfigReviewContinue = useCallback(() => {
     if (!config) return;
-    if (skipMediaPrecheck) {
+    
+    // Determine what checks are actually required based on config
+    const needsCamera = config.level === "strict" || config.requireCamera || config.requireFaceAuth || config.monitorGaze || config.detectBannedObjects;
+    const needsScreen = config.level === "strict" || config.requireScreenShare || config.detectBannedApps;
+    
+    if (needsCamera) {
+      setWizardPhase(2);
+    } else if (needsScreen) {
+      setWizardPhase(5);
+    } else {
       onComplete(null, null, config, proctorConfig, { mobileRelayOnly: false });
-      return;
     }
-    setWizardPhase(2);
-  }, [config, proctorConfig, onComplete, skipMediaPrecheck]);
+  }, [config, proctorConfig, onComplete]);
 
   const handleCameraConfirm = (stream: MediaStream) => {
     setMobileRelayOnly(false);
     setCameraStream(stream);
 
-    if (config?.level === "none" && !config.detectBannedApps && !config.requireFaceAuth) {
-      onComplete(stream, null, config as ExamTrackingConfig, proctorConfig, { mobileRelayOnly: false });
-    } else {
+    if (config?.requireFaceAuth) {
       setWizardPhase(3);
+    } else {
+      setWizardPhase(4);
     }
   };
 
@@ -167,16 +201,35 @@ export function ExamPrecheck({
       setCameraStream(stream);
       setMobileRelayOnly(true);
 
-      if (config?.level === "none" && !config.detectBannedApps && !config.requireFaceAuth) {
-        onComplete(stream, null, config as ExamTrackingConfig, proctorConfig, { mobileRelayOnly: true });
-      } else {
+      if (config?.requireFaceAuth) {
         setWizardPhase(3);
+      } else {
+        setWizardPhase(4);
       }
     },
-    [config, onComplete, proctorConfig],
+    [config],
   );
 
+  const handleOrientationSuccess = useCallback(() => {
+    const needsScreen = config?.level === "strict" || config?.requireScreenShare || config?.detectBannedApps;
+    if (needsScreen) {
+      setWizardPhase(5);
+    } else {
+      onComplete(cameraStream, null, config as ExamTrackingConfig, proctorConfig, {
+        mobileRelayOnly,
+      });
+    }
+  }, [config, cameraStream, proctorConfig, mobileRelayOnly, onComplete]);
+
   const handleEnvironmentSuccess = useCallback(async () => {
+    const mustShareScreen = config?.level === "strict" || config?.requireScreenShare === true || config?.detectBannedApps === true;
+    if (!mustShareScreen) {
+      onComplete(cameraStream, null, config as ExamTrackingConfig, proctorConfig, {
+        mobileRelayOnly,
+      });
+      return;
+    }
+
     const screenStream = await startScreenCapture();
     if (!screenStream) return;
     onComplete(cameraStream, screenStream, config as ExamTrackingConfig, proctorConfig, {
@@ -207,12 +260,15 @@ export function ExamPrecheck({
   }
 
   if (wizardPhase === 1 && config) {
+    const needsCamera = config.level === "strict" || config.requireCamera || config.requireFaceAuth || config.monitorGaze || config.detectBannedObjects;
+    const needsScreen = config.level === "strict" || config.requireScreenShare || config.detectBannedApps;
+    
     return (
       <ProctoringConfigSummary
         config={config}
         proctorConfig={proctorConfig}
         onContinue={handleConfigReviewContinue}
-        continueLabel={skipMediaPrecheck ? t("precheck.startExam") : t("precheck.continueChecks")}
+        continueLabel={(!needsCamera && !needsScreen) ? t("precheck.startExam") : t("precheck.continueChecks")}
       />
     );
   }
@@ -245,7 +301,7 @@ export function ExamPrecheck({
     return (
       <CameraOrientationCheck
         stream={cameraStream}
-        onSuccess={() => setWizardPhase(5)}
+        onSuccess={handleOrientationSuccess}
         onCancel={() => navigate("/dashboard")}
       />
     );

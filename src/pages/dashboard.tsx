@@ -98,31 +98,31 @@ export default function DashboardPage() {
     <div className="space-y-6">
       {/* In-progress alert */}
       {inProgressExam && (
-        <Card className="border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20">
-          <CardContent className="flex items-center gap-4 p-4">
-            <div className="rounded-lg bg-amber-100 dark:bg-amber-900/50 p-2.5">
-              <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-medium text-amber-900 dark:text-amber-100">
-                {t("dashboard.inProgressAlert")}
-              </p>
-              <p className="text-sm text-amber-700 dark:text-amber-300">
-                {t("dashboard.inProgressDesc", {
-                  name: inProgressExam.name ?? inProgressExam.title ?? "",
-                })}
+        <div className="rounded-xl border-2 border-red-500 bg-red-50 dark:bg-red-950/20 shadow-lg mb-6 overflow-hidden">
+          <div className="bg-red-500 text-white px-4 py-2 text-sm font-bold flex items-center gap-2">
+            <AlertCircle className="h-4 w-4" />
+            CẢNH BÁO: PHIÊN THI ĐANG DIỄN RA
+          </div>
+          <div className="p-4 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <h3 className="text-xl font-bold text-red-900 dark:text-red-100">
+                {inProgressExam.name ?? inProgressExam.title ?? ""}
+              </h3>
+              <p className="text-red-700 dark:text-red-300">
+                Hệ thống phát hiện kết nối của bạn bị gián đoạn trong lúc thi. Bài thi vẫn đang tính giờ!
               </p>
             </div>
             <Button
-              size="sm"
+              size="lg"
+              variant="destructive"
               onClick={() => navigate(`/exams/${inProgressExam.id}`)}
-              className="shrink-0"
+              className="shrink-0 w-full sm:w-auto font-bold shadow-lg animate-pulse"
             >
-              <Play className="h-4 w-4 mr-1.5" />
-              {t("dashboard.resumeExam")}
+              <Play className="h-4 w-4 mr-2 fill-current" />
+              Kết nối lại ngay
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {/* Stats */}

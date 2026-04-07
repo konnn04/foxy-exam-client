@@ -31,6 +31,7 @@ import {
   MonitorX,
   Timer,
 } from "lucide-react";
+import { FaceRegistrationModal } from "@/components/face-registration-modal";
 
 interface ExamDetail {
   id: number;
@@ -59,6 +60,7 @@ interface ExamDetail {
     submitted_at?: string;
   }>;
   active_attempt?: { id: number } | null;
+  has_face_data?: boolean;
   exam_configuration?: {
     max_attempts?: number;
     allow_review?: boolean;
@@ -89,6 +91,7 @@ export default function ExamDetailPage() {
   const [examConfig, setExamConfig] = useState<ExamConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
+  const [showFaceModal, setShowFaceModal] = useState(false);
   const navigate = useNavigate();
   const toast = useToastCustom();
   const { confirm } = useAlertDialog();
@@ -103,6 +106,9 @@ export default function ExamDetailPage() {
           ...base,
           total_questions: root.total_questions ?? base.total_questions,
           attempt_count: root.attempt_count ?? base.attempt_count,
+          has_face_data: root.has_face_data,
+          active_attempt: root.active_attempt ?? base.active_attempt,
+          latest_attempt: root.latest_attempt ?? base.latest_attempt,
           max_attempts:
             root.max_attempts ??
             base.max_attempts ??
@@ -180,7 +186,10 @@ export default function ExamDetailPage() {
     (a) => a.status === "submitted" || a.status === "completed" || a.status === "SUBMITTED"
   );
   const attemptCount = exam.attempt_count ?? completedAttempts?.length ?? 0;
-  const canAttempt = isActive && (!maxAttempts || attemptCount < maxAttempts);
+  
+  const hasActive = !!(exam.active_attempt ?? (exam.latest_attempt?.status === 'in_progress' ? exam.latest_attempt : null));
+  
+  const canAttempt = isActive && (hasActive || !maxAttempts || attemptCount < maxAttempts);
 
   const monitorLevelLabel = (level?: string) => {
     switch (level) {
@@ -308,13 +317,30 @@ export default function ExamDetailPage() {
           </div>
 
           {/* Action */}
-          <div className="flex justify-center pt-2">
+          <div className="flex justify-center flex-col items-center pt-2 gap-3">
+            {!!examConfig?.requireFaceAuth && exam.has_face_data === false && !isEnded && canAttempt && (
+              <div className="w-full rounded-lg border border-red-500/30 bg-red-50/50 dark:bg-red-950/20 p-3 mb-2">
+                <div className="text-sm text-red-700 dark:text-red-300 flex items-start gap-2">
+                  <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold block mb-1">Thiếu dữ liệu khuôn mặt</span>
+                    Bài thi yêu cầu xác thực khuôn mặt nhưng bạn chưa có dữ liệu sinh trắc học. Vui lòng cập nhật khuôn mặt để có thể bắt đầu thi.
+                    <div className="mt-3">
+                      <Button variant="outline" size="sm" onClick={() => setShowFaceModal(true)} className="border-red-500 text-red-700 hover:bg-red-100 dark:border-red-400 dark:text-red-300 dark:hover:bg-red-900/50">
+                        Cập nhật khuôn mặt
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {isEnded ? (
               <p className="text-muted-foreground text-sm">{t("examDetail.ended")}</p>
             ) : isUpcoming ? (
               <p className="text-muted-foreground text-sm">{t("examDetail.notStarted")}</p>
             ) : canAttempt ? (
-              <Button size="lg" onClick={handleStart} disabled={starting} className="min-w-48">
+              <Button size="lg" onClick={handleStart} disabled={starting || (!!examConfig?.requireFaceAuth && exam.has_face_data === false)} className="min-w-48">
                 {starting ? (
                   <span className="flex items-center gap-2">
                     <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
@@ -383,6 +409,9 @@ export default function ExamDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Face Registration Instructions */}
+      <FaceRegistrationModal open={showFaceModal} onOpenChange={setShowFaceModal} />
     </div>
   );
 }

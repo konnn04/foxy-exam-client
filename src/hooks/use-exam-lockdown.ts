@@ -5,38 +5,57 @@ import {
   DEVELOPMENT_MODE,
   EXAM_LOCKDOWN,
 } from "@/config";
+import { telemetryPublisher } from "@/lib/telemetry-publisher";
 
 interface UseExamLockdownProps {
   wizardPhase: number;
   config: ExamTrackingConfig | null;
   examId?: string;
   submitting: boolean;
-  addViolation: (type: string, message: string) => void;
+  /** Client-side UI lock callback — only for UX that needs instant feedback */
   setIsBlurred: (blurred: boolean) => void;
   setBlurReason: (reason: string) => void;
 }
 
+/**
+ * Exam Lockdown Hook — Refactored for Telemetry Architecture
+ *
+ * This hook now ONLY:
+ * 1. Captures raw events (keyboard, mouse, blur, process, display, network, perf)
+ * 2. Sends them via telemetryPublisher → LiveKit DataChannel → Agent
+ * 3. Applies CLIENT-SIDE instant locks for events that need real-time UX
+ *    (banned_app, multiple_screens, exit_fullscreen, connection_lost)
+ *
+ * The Agent decides violations. Client does NOT create violations.
+ */
 export function useExamLockdown({
   wizardPhase,
   config,
   examId,
   submitting,
-  addViolation,
   setIsBlurred,
   setBlurReason,
 }: UseExamLockdownProps) {
   const toast = useToastCustom();
-  
+
   const [hardwareLock, setHardwareLock] = useState("");
   const [bannedApps, setBannedApps] = useState<string[]>([]);
   const [screenCount, setScreenCount] = useState<number>(1);
-  
-  const keyLogsRef = useRef<{time: string, type: string, data: string}[]>([]);
+
+  const keyLogsRef = useRef<{ time: string; type: string; data: string }[]>([]);
   const frameCountRef = useRef(0);
   const lastMetricsTimeRef = useRef(performance.now());
   const fpsRef = useRef(0);
 
-  // FPS Counter
+  // Process diff tracking
+  const lastProcessListRef = useRef<Set<string>>(new Set());
+  const isFirstProcessSnapshotRef = useRef(true);
+
+  // Initial display ID (for monitor_changed detection)
+  const initialDisplayIdRef = useRef<number | null>(null);
+  const vmCheckDoneRef = useRef(false);
+
+  // ─── FPS Counter ───────────────────────────────────────────
   useEffect(() => {
     let animationFrameId: number;
     const loop = () => {
@@ -47,61 +66,73 @@ export function useExamLockdown({
     return () => cancelAnimationFrame(animationFrameId);
   }, []);
 
-  // Global Input Hooks (Keyboard, Mouse, Blur, Tab switch, etc.)
+  // ─── Global Input Hooks: Emit events, NOT violations ───────
   useEffect(() => {
     if (wizardPhase < 5) return;
     const trackingLvl = config?.level || "strict";
-    
+
+    // Tab switch (visibilitychange)
     const handleVisibilityChange = () => {
-      if (document.hidden && trackingLvl !== "none") {
-        addViolation("tab_switch", "Bạn đã chuyển tab hoặc rời khỏi trang thi.");
+      if (trackingLvl === "none") return;
+      if (document.hidden) {
+        telemetryPublisher.send("tab_switch", {});
+      } else {
+        telemetryPublisher.send("tab_return", {});
       }
     };
 
+    // Window blur/focus
     const handleBlur = () => {
       if (trackingLvl !== "none") {
-        addViolation("window_blur", "Bạn đã chuyển sang cửa sổ khác.");
+        telemetryPublisher.send("window_blur", {});
+      }
+    };
+    const handleFocus = () => {
+      if (trackingLvl !== "none") {
+        telemetryPublisher.emit("window_focus", {});
       }
     };
 
+    // Context menu blocked
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
     };
 
+    // Global hook (Electron native keyboard/mouse hook)
     if (window.electronAPI?.startGlobalHook && trackingLvl === "strict") {
       window.electronAPI.startGlobalHook();
-      
-      const handleGlobalHook = (_: any, payload: { type: string, data: string }) => {
+
+      const handleGlobalHook = (_: any, payload: { type: string; data: string }) => {
         keyLogsRef.current.push({
           time: new Date().toISOString(),
           type: payload.type,
-          data: payload.data
+          data: payload.data,
         });
-        
+
         if (payload.type === "keydown") {
           const lowerKey = payload.data.toLowerCase();
           if (lowerKey === "printscreen") {
-            addViolation("screenshot", "Bạn đã cố chụp ảnh màn hình.");
+            telemetryPublisher.send("screenshot", {});
           } else if (lowerKey === "f12") {
             if (!DEVELOPMENT_MODE.ENABLED) {
-              addViolation("devtools", "Bạn đã cố mở Developer Tools.");
+              telemetryPublisher.send("devtools", { source: "f12" });
             }
           }
         }
       };
-      
+
       window.electronAPI.onGlobalHookEvent(handleGlobalHook);
-      
+
       const handleDevToolsOpened = () => {
         if (!DEVELOPMENT_MODE.ENABLED) {
-          addViolation("devtools", "Phát hiện mở Developer Tools.");
+          telemetryPublisher.send("devtools", { source: "devtools_opened" });
         }
       };
 
       if (window.electronAPI.onDevToolsOpened) {
         window.electronAPI.onDevToolsOpened(handleDevToolsOpened);
       }
-      
+
       (window as any)._cleanupGlobalHook = () => {
         if (window.electronAPI?.offGlobalHookEvent) {
           window.electronAPI.offGlobalHookEvent(handleGlobalHook);
@@ -115,89 +146,180 @@ export function useExamLockdown({
       };
     }
 
+    // Keyboard shortcuts
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "PrintScreen") {
         e.preventDefault();
+        telemetryPublisher.send("screenshot", { source: "keydown_printscreen" });
         return;
       }
       if (e.ctrlKey || e.metaKey) {
         const blockedKeys = EXAM_LOCKDOWN.BLOCKED_KEY_COMBINATIONS;
         if (blockedKeys.includes(e.key.toLowerCase())) {
           e.preventDefault();
-          addViolation("keyboard_shortcut", `Phím tắt bị cấm: ${e.ctrlKey ? "Ctrl" : "Cmd"}+${e.key.toUpperCase()}`);
+          telemetryPublisher.send("keyboard_shortcut", {
+            keys: `${e.ctrlKey ? "Ctrl" : "Cmd"}+${e.key.toUpperCase()}`,
+          });
           return;
         }
       }
       if (e.key === "F11") {
-        if (!DEVELOPMENT_MODE.ENABLED) {
-          e.preventDefault();
-        }
-        addViolation("keyboard_shortcut", `Phím tắt bị cấm: ${e.key}`);
+        if (!DEVELOPMENT_MODE.ENABLED) e.preventDefault();
+        telemetryPublisher.send("keyboard_shortcut", { keys: "F11" });
         return;
       }
       if (e.key === "F12") {
-        if (!DEVELOPMENT_MODE.ENABLED) {
-          e.preventDefault();
-        }
+        if (!DEVELOPMENT_MODE.ENABLED) e.preventDefault();
       }
     };
 
+    // Copy/Cut
     const handleCopy = (e: ClipboardEvent) => {
       e.preventDefault();
-      addViolation("copy", "Bạn đã cố sao chép nội dung.");
+      telemetryPublisher.send("copy_attempt", {});
     };
-    
-    const handleMouseDownFallback = (e: MouseEvent) => {
-      keyLogsRef.current.push({
-        time: new Date().toISOString(),
-        type: "mousedown_fallback",
-        data: `X:${e.clientX}, Y:${e.clientY}, Button:${e.button}`
+
+    // Mouse click logging
+    const handleMouseDown = (e: MouseEvent) => {
+      telemetryPublisher.emit("mouse_click", {
+        x: e.clientX,
+        y: e.clientY,
+        button: e.button,
       });
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("blur", handleBlur);
+    window.addEventListener("focus", handleFocus);
     document.addEventListener("contextmenu", handleContextMenu);
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("copy", handleCopy);
     document.addEventListener("cut", handleCopy);
-    document.addEventListener("mousedown", handleMouseDownFallback);
+    document.addEventListener("mousedown", handleMouseDown);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("focus", handleFocus);
       document.removeEventListener("contextmenu", handleContextMenu);
       document.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("copy", handleCopy);
       document.removeEventListener("cut", handleCopy);
-      document.removeEventListener("mousedown", handleMouseDownFallback);
-      
+      document.removeEventListener("mousedown", handleMouseDown);
+
       if ((window as any)._cleanupGlobalHook) {
         (window as any)._cleanupGlobalHook();
       }
     };
-  }, [wizardPhase, addViolation, submitting, config]);
+  }, [wizardPhase, submitting, config]);
 
-  // Network info (Electron): window chrome is owned by useElectronExamStrictWindow on the take route.
+  // ─── Network info (log once) ───────────────────────────────
   useEffect(() => {
     if (wizardPhase < 5) return;
     if (!window.electronAPI?.getNetworkInfo) return;
     window.electronAPI
       .getNetworkInfo()
-      .then((info) => {
-        console.log("Foxy Exam client network info:", info);
+      .then((info: any) => {
+        telemetryPublisher.emit("network_snapshot", { addresses: info });
       })
-      .catch((e) => console.error("Failed to fetch network info", e));
+      .catch((e: any) => console.error("Failed to fetch network info", e));
   }, [wizardPhase]);
 
-  // Hardware Checks (Banned Apps, Multiple Screens, FPS)
+  // ─── VM detection (one-time at exam start) ───────────────────
+  useEffect(() => {
+    if (wizardPhase < 5 || submitting) return;
+    if (vmCheckDoneRef.current) return;
+    vmCheckDoneRef.current = true;
+
+    (async () => {
+      if (!window.electronAPI?.getVmDetection) return;
+      try {
+        const vm = await window.electronAPI.getVmDetection();
+        if (!vm?.isVirtualMachine) return;
+
+        telemetryPublisher.send("virtual_machine_detected", {
+          confidence: vm.confidence,
+          reasons: vm.reasons,
+          details: vm.details,
+        });
+
+        const reasonText = `Phát hiện môi trường máy ảo (${(vm.confidence * 100).toFixed(0)}%). Vui lòng dùng máy vật lý để tiếp tục làm bài.`;
+        if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_DEV) {
+          toast.error(`[Dev Bypass] ${reasonText}`);
+        } else {
+          setIsBlurred(true);
+          setBlurReason(reasonText);
+          setHardwareLock(reasonText);
+        }
+      } catch (error) {
+        console.error("VM detection error", error);
+      }
+    })();
+  }, [wizardPhase, submitting, setIsBlurred, setBlurReason, toast]);
+
+  // ─── HW Monitoring: Display & Network change events ────────
+  useEffect(() => {
+    if (wizardPhase < 5) return;
+    if (!window.electronAPI?.startHwMonitoring) return;
+
+    window.electronAPI.startHwMonitoring();
+
+    // Get initial display ID
+    if (window.electronAPI.getDisplayId) {
+      window.electronAPI.getDisplayId().then((display: any) => {
+        if (display) {
+          initialDisplayIdRef.current = display.id;
+          telemetryPublisher.emit("display_snapshot", { displayId: display.id, label: display.label });
+        }
+      });
+    }
+
+    const handleDisplayChanged = (_: any, data: any) => {
+      telemetryPublisher.send("display_changed", data);
+
+      // Client-side lock for multiple screens
+      if (data.count > 1) {
+        telemetryPublisher.send("multiple_screens", { count: data.count });
+        
+        const shouldLockMultiMonitor = config?.level === "strict" || config?.noMultiMonitor === true;
+        if (!DEVELOPMENT_MODE.ENABLED && shouldLockMultiMonitor) {
+          setIsBlurred(true);
+          setBlurReason(`Phát hiện ${data.count} màn hình. Vui lòng chỉ sử dụng một màn hình.`);
+          setHardwareLock(`Phát hiện ${data.count} màn hình. Vui lòng chỉ sử dụng một màn hình duy nhất.`);
+        }
+      }
+
+      // Monitor changed (same count but different monitor)
+      if (data.currentId !== initialDisplayIdRef.current && data.count <= 1) {
+        telemetryPublisher.send("monitor_changed", {
+          oldId: data.previousId,
+          newId: data.currentId,
+        });
+      }
+    };
+
+    const handleNetworkChanged = (_: any, data: any) => {
+      telemetryPublisher.send("network_changed", data);
+    };
+
+    window.electronAPI.onDisplayChanged?.(handleDisplayChanged);
+    window.electronAPI.onNetworkChanged?.(handleNetworkChanged);
+
+    return () => {
+      window.electronAPI?.stopHwMonitoring?.();
+      window.electronAPI?.offDisplayChanged?.(handleDisplayChanged);
+      window.electronAPI?.offNetworkChanged?.(handleNetworkChanged);
+    };
+  }, [wizardPhase, setIsBlurred, setBlurReason]);
+
+  // ─── Hardware Checks: Banned Apps, Screen Count, Perf, Process ──
   useEffect(() => {
     if (wizardPhase < 5) return;
     const trackingLvl = config?.level || "none";
     const shouldCheckBannedApps = config?.detectBannedApps === true || trackingLvl === "strict";
-    
+
     if (trackingLvl === "none" && !shouldCheckBannedApps) return;
-    
+
     let hardwareViolated = false;
 
     const monitorInterval = setInterval(async () => {
@@ -208,12 +330,14 @@ export function useExamLockdown({
 
       if (window.electronAPI) {
         try {
+          // Screen count check (telemetry emission handled by onDisplayChanged; only lock UI here)
           if (window.electronAPI.getScreenCount) {
             currentScreenCount = await window.electronAPI.getScreenCount();
             setScreenCount(currentScreenCount);
-            if (currentScreenCount > 1) {
+            
+            const shouldLockMultiMonitor = config?.level === "strict" || config?.noMultiMonitor === true;
+            if (currentScreenCount > 1 && shouldLockMultiMonitor) {
               if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_MULTI_SCREEN) {
-                // Dev bypass: skip multi-screen lock
                 toast.error(`[Dev Bypass] Phát hiện ${currentScreenCount} màn hình (bypassed)`);
               } else if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_DEV) {
                 toast.error(`[Dev Bypass] Phát hiện ${currentScreenCount} màn hình.`);
@@ -223,9 +347,10 @@ export function useExamLockdown({
               }
             }
           }
+
+          // Banned apps check
           if (window.electronAPI.getRunningBannedApps && shouldCheckBannedApps) {
             if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_BANNED_APPS) {
-              // Dev bypass: skip banned app detection entirely
               setBannedApps([]);
             } else {
               const appsList = Array.isArray(config?.bannedApps) ? config.bannedApps : [];
@@ -233,17 +358,45 @@ export function useExamLockdown({
                 detectedApps = await window.electronAPI.getRunningBannedApps(appsList);
                 setBannedApps(detectedApps);
                 if (detectedApps.length > 0) {
+                  // Client-side lock immediately (don't wait for Agent)
                   if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_DEV) {
-                    toast.error(`[Dev Bypass] Đang mở phần mềm bị cấm: ${detectedApps.join(', ')}`);
+                    toast.error(`[Dev Bypass] Đang mở phần mềm bị cấm: ${detectedApps.join(", ")}`);
                   } else {
                     isLocked = true;
-                    lockMsgs.push(`Đang mở phần mềm bị cấm: ${detectedApps.join(', ')}. Vui lòng tắt các phần mềm này để tiếp tục.`);
+                    lockMsgs.push(`Đang mở phần mềm bị cấm: ${detectedApps.join(", ")}. Vui lòng tắt các phần mềm này để tiếp tục.`);
                   }
+                  telemetryPublisher.send("banned_app_detected", { apps: detectedApps });
+                } else if (hardwareViolated) {
+                  // Apps were cleared
+                  telemetryPublisher.emit("banned_app_cleared", {});
                 }
               } else {
                 setBannedApps([]);
               }
             }
+          }
+
+          // ─── Process list (diff-based) ─────────────────────
+          if (window.electronAPI.getProcessList) {
+            const processes: any[] = await window.electronAPI.getProcessList();
+            const currentNames = new Set(processes.map((p: any) => p.name));
+
+            if (isFirstProcessSnapshotRef.current) {
+              // First snapshot — send full list
+              telemetryPublisher.emit("process_snapshot", {
+                action: "full",
+                processes: processes.map((p: any) => ({ name: p.name, pid: p.pid })),
+              });
+              isFirstProcessSnapshotRef.current = false;
+            } else {
+              // Diff: find started and stopped
+              const started = [...currentNames].filter((n) => !lastProcessListRef.current.has(n));
+              const stopped = [...lastProcessListRef.current].filter((n) => !currentNames.has(n));
+              if (started.length > 0 || stopped.length > 0) {
+                telemetryPublisher.emit("process_diff", { started, stopped });
+              }
+            }
+            lastProcessListRef.current = currentNames;
           }
         } catch (e) {
           console.error("Lỗi Hardware Check:", e);
@@ -253,20 +406,13 @@ export function useExamLockdown({
       if (isLocked) {
         const fullReason = lockMsgs.join("\n");
         setHardwareLock(fullReason);
-        setIsBlurred(true); 
-        
-        if (!hardwareViolated) {
-          hardwareViolated = true;
-          if (detectedApps.length > 0) {
-            addViolation("banned_app", `Đang mở phần mềm bị cấm: ${detectedApps.join(', ')}`);
-          }
-          if (currentScreenCount > 1) {
-            addViolation("multiple_screens", `Phát hiện ${currentScreenCount} màn hình`);
-          }
-        }
+        setIsBlurred(true);
+        hardwareViolated = true;
       } else {
-        hardwareViolated = false;
-        setHardwareLock(prev => {
+        if (hardwareViolated) {
+          hardwareViolated = false;
+        }
+        setHardwareLock((prev) => {
           if (prev !== "") {
             setIsBlurred(false);
             setBlurReason("");
@@ -275,6 +421,7 @@ export function useExamLockdown({
         });
       }
 
+      // ─── FPS calculation ─────────────────────────────────
       const now = performance.now();
       const elapsed = now - lastMetricsTimeRef.current;
       if (elapsed > 0) {
@@ -282,21 +429,34 @@ export function useExamLockdown({
       }
       frameCountRef.current = 0;
       lastMetricsTimeRef.current = now;
+    }, 5000); // Every 5s for process and hardware
 
-      if (window.electronAPI && window.electronAPI.logSystemMetrics && examId) {
-        window.electronAPI.logSystemMetrics(examId, fpsRef.current).catch(e => console.error("Lỗi log system metrics:", e));
-      }
+    // ─── System metrics (CPU/RAM) — every 2s ───────────────
+    let perfInterval: ReturnType<typeof setInterval> | null = null;
+    if (window.electronAPI?.getSystemMetrics) {
+      perfInterval = setInterval(async () => {
+        try {
+          const metrics = await window.electronAPI!.getSystemMetrics!();
+          telemetryPublisher.emit("perf_metrics", {
+            ...metrics,
+            fps: fpsRef.current,
+          });
+        } catch {
+          /* ignore */
+        }
+      }, 2000);
+    }
 
-    }, 1000); 
-    
-    return () => clearInterval(monitorInterval);
-  }, [wizardPhase, config, addViolation, examId, setIsBlurred, setBlurReason]);
+    return () => {
+      clearInterval(monitorInterval);
+      if (perfInterval) clearInterval(perfInterval);
+    };
+  }, [wizardPhase, config, examId, setIsBlurred, setBlurReason, toast]);
 
-  // Fullscreen: Electron native mode is set for the whole take route by useElectronExamStrictWindow.
-  // Here we only use the Fullscreen API for non-Electron (browser) builds.
+  // ─── Fullscreen: client-side lock (Layer 1) ────────────────
   useEffect(() => {
     if (wizardPhase < 5) return;
-    if (window.electronAPI?.setFullScreen) return;
+    if (window.electronAPI?.setFullScreen) return; // Electron handles native fullscreen
 
     const trackingLvl = config?.level || "strict";
 
@@ -308,7 +468,7 @@ export function useExamLockdown({
           await document.documentElement.requestFullscreen();
         }
       } catch {
-        /* plug-in: production error reporting */
+        /* browser may reject */
       }
     };
     void requestFullscreen();
@@ -317,16 +477,19 @@ export function useExamLockdown({
       if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_FULLSCREEN) return;
       if (!document.fullscreenElement && wizardPhase >= 5 && !submitting) {
         if (trackingLvl !== "none") {
-          const blurReasonFullscreen = "Chế độ xem toàn màn hình đã bị tắt.";
-          addViolation("exit_fullscreen", blurReasonFullscreen);
+          // Emit event to Agent
+          telemetryPublisher.send("exit_fullscreen", {});
 
+          // Client-side lock immediately
           if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_DEV) {
-            toast.error(`[Dev Bypass] ${blurReasonFullscreen}`);
+            toast.error("[Dev Bypass] Chế độ xem toàn màn hình đã bị tắt.");
           } else {
             setIsBlurred(true);
-            setBlurReason(blurReasonFullscreen);
+            setBlurReason("Chế độ xem toàn màn hình đã bị tắt.");
           }
         }
+      } else if (document.fullscreenElement) {
+        telemetryPublisher.emit("enter_fullscreen", {});
       }
     };
 
@@ -334,7 +497,7 @@ export function useExamLockdown({
     return () => {
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
-  }, [wizardPhase, addViolation, submitting, config, toast, setIsBlurred, setBlurReason]);
+  }, [wizardPhase, submitting, config, toast, setIsBlurred, setBlurReason]);
 
   const clearHardwareLock = () => {
     setHardwareLock("");

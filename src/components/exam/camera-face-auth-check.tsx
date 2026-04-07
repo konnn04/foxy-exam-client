@@ -24,6 +24,13 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
   const [phase, setPhase] = useState<AuthPhase>('init');
   const [progress, setProgress] = useState(0);
   const [volume, setVolume] = useState(0);
+  const [qualityHint, setQualityHint] = useState<string>("");
+  const FACE_AUTH_WARMUP_MS = 4000;
+  const STRAIGHT_HOLD_MS = 1000;
+  const SIDE_HOLD_MS = 700;
+  const MIN_BRIGHTNESS = 42; // avoid under-exposed frames
+  const MIN_SHARPNESS = 8;   // avoid blurry frames
+
   
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
   const requestRef = useRef<number>(0);
@@ -76,10 +83,16 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
           faceLandmarkerRef.current = await createFaceLandmarker();
         }
         if (!isSubscribed) return;
-        setPhase('straight');
+        setPhase('init');
         capturedImagesRef.current = []; // reset images on init
         phaseStartTimeRef.current = performance.now();
-        requestRef.current = requestAnimationFrame(processVideoFrame);
+        setTimeout(() => {
+          if (!isSubscribed) return;
+          setPhase('straight');
+          phaseRef.current = 'straight';
+          phaseStartTimeRef.current = performance.now();
+          requestRef.current = requestAnimationFrame(processVideoFrame);
+        }, FACE_AUTH_WARMUP_MS);
       } catch (err) {
         console.error("Lỗi khởi tạo AI:", err);
         setPhase('failed');
@@ -139,18 +152,61 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
     phaseRef.current = phase;
   }, [phase]);
 
+  const getFrameQuality = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return null;
+
+    const w = 160;
+    const h = 90;
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, w, h);
+    const img = ctx.getImageData(0, 0, w, h).data;
+
+    let lumSum = 0;
+    let sharpSum = 0;
+    let sharpCount = 0;
+    const lums = new Float32Array(w * h);
+    for (let i = 0, p = 0; i < img.length; i += 4, p++) {
+      const l = 0.299 * img[i] + 0.587 * img[i + 1] + 0.114 * img[i + 2];
+      lums[p] = l;
+      lumSum += l;
+    }
+    for (let y = 1; y < h; y++) {
+      for (let x = 1; x < w; x++) {
+        const p = y * w + x;
+        sharpSum += Math.abs(lums[p] - lums[p - 1]) + Math.abs(lums[p] - lums[p - w]);
+        sharpCount += 2;
+      }
+    }
+    const brightness = lumSum / (w * h);
+    const sharpness = sharpCount > 0 ? sharpSum / sharpCount : 0;
+    return { brightness, sharpness };
+  };
+
   const captureFrame = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+    if (!video || !canvas) return false;
     
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     if (ctx) {
+      const quality = getFrameQuality();
+      if (!quality || quality.brightness < MIN_BRIGHTNESS || quality.sharpness < MIN_SHARPNESS) {
+        setQualityHint("Khung hình đang mờ/tối, giữ yên 1-2 giây để camera lấy nét.");
+        return false;
+      }
+      setQualityHint("");
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       capturedImagesRef.current.push(canvas.toDataURL('image/jpeg', 0.9));
+      return true;
     }
+    return false;
   };
 
   const handlePhaseLogic = (pitch: number, yaw: number, timeInPhase: number) => {
@@ -161,9 +217,13 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
       const isStraight = Math.abs(pitch) < 15 && Math.abs(yaw) < 15;
       if (isStraight) {
         setProgress(Math.min(33, (timeInPhase / 500) * 33));
-        if (timeInPhase > 500) {
+        if (timeInPhase > STRAIGHT_HOLD_MS) {
+          if (!captureFrame()) {
+            phaseStartTimeRef.current = performance.now();
+            setProgress(0);
+            return;
+          }
           phaseRef.current = 'left';
-          captureFrame();
           setPhase('left');
           phaseStartTimeRef.current = performance.now();
         }
@@ -177,9 +237,13 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
       const isLeft = yaw < -10;
       if (isLeft) {
         setProgress(33 + Math.min(33, (timeInPhase / 500) * 33));
-        if (timeInPhase > 500) {
+        if (timeInPhase > SIDE_HOLD_MS) {
+          if (!captureFrame()) {
+            phaseStartTimeRef.current = performance.now();
+            setProgress(33);
+            return;
+          }
           phaseRef.current = 'right';
-          captureFrame();
           setPhase('right');
           phaseStartTimeRef.current = performance.now();
         }
@@ -193,9 +257,13 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
       const isRight = yaw > 10;
       if (isRight) {
         setProgress(66 + Math.min(34, (timeInPhase / 500) * 34));
-        if (timeInPhase > 500) {
+        if (timeInPhase > SIDE_HOLD_MS) {
+          if (!captureFrame()) {
+            phaseStartTimeRef.current = performance.now();
+            setProgress(66);
+            return;
+          }
           phaseRef.current = 'verifying';
-          captureFrame();
           setPhase('verifying');
           verifyIdentity();
         }
@@ -345,6 +413,11 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
                  className={`h-2 ${phase === 'done' ? "[&>div]:bg-green-500" : phase === 'failed' ? "[&>div]:bg-destructive" : ""}`} 
                />
             </div>
+            {qualityHint && phase !== 'verifying' && phase !== 'done' && (
+              <div className="bg-amber-500/10 text-amber-700 p-3 rounded-lg text-sm border border-amber-400/30">
+                {qualityHint}
+              </div>
+            )}
             
             {phase === 'failed' && (
               <div className="bg-destructive/10 text-destructive p-4 rounded-lg text-sm border border-destructive/20">
