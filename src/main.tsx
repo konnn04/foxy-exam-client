@@ -18,7 +18,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <OfflineModeProvider>
               <App />
               <AlertDialogProvider />
-              <Toaster richColors position="top-right" />
+              <Toaster richColors position="bottom-right" />
             </OfflineModeProvider>
           </ConnectionProvider>
         </TooltipProvider>

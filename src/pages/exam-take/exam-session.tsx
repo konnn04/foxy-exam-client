@@ -4,13 +4,13 @@ import api from "@/lib/api";
 import { useExamSocketStore, useExamSocket } from "@/hooks/use-exam-socket";
 import { webrtcService } from "@/lib/webrtc-service";
 import { livekitPublisher } from "@/lib/livekit-publisher";
+import { telemetryPublisher } from "@/lib/telemetry-publisher";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import { useAlertDialog } from "@/hooks/use-alert-dialog";
 import { ExamMainContent, ExamOverlay, ExamTopNav, ExamStatusBar } from "@/components/exam/exam-take-sections";
 import { WebcamPopup, WebcamPopupHandle } from "@/components/exam/webcam-popup";
 import { useFaceMonitor } from "@/hooks/use-face-monitor";
 import { useExamLockdown } from "@/hooks/use-exam-lockdown";
-import { useEvidenceRecorder } from "@/hooks/use-evidence-recorder";
 import { useAudioMonitor } from "@/hooks/use-audio-monitor";
 import type { FaceLandmarkerResult } from "@mediapipe/tasks-vision";
 import { DEVELOPMENT_MODE, NO_LOCKSCREEN_WHEN_DEV_MODE } from "@/config/security.config";
@@ -90,59 +90,21 @@ export function ExamSession({
   const [isLiveKitConnected, setIsLiveKitConnected] = useState(false);
   
   const screenStreamRef = useRef<MediaStream | null>(initialScreenStream);
-  const dismissCooldownRef = useRef(false); // suppress violations during dismiss
+  const dismissCooldownRef = useRef(false); // suppress events during dismiss
 
-  const addViolation = useCallback((type: string, message: string) => {
-    // Skip violations during dismiss cooldown to prevent cascade loop
-    if (dismissCooldownRef.current) return;
-
-    const v: Violation = { type, timestamp: Date.now(), message };
-    setViolations((prev) => [...prev, v]);
-
-    // Log violation to WebSocket with enriched data
-    useExamSocketStore.getState().logEvent('violation', { 
-      violationType: type, 
-      message,
-      localTime: new Date().toISOString(),
-    });
-    
-    if (DEVELOPMENT_MODE.ENABLED && NO_LOCKSCREEN_WHEN_DEV_MODE) {
-      toast.error(`[Dev Bypass] ${message}`);
-    } else {
-      setIsBlurred(true);
-      setBlurReason(message);
-    }
-  }, [toast]);
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const currentScreenStream = isScreenSharing ? screenStreamRef.current : null;
-
-  const { reportViolation } = useEvidenceRecorder({
-    examId,
-    attemptId,
-    enabled: !submitting,
-    cameraStream,
-    screenStream: currentScreenStream,
-  });
-
-  // When a violation is added locally, report to exam-sys with evidence (skip server-broadcast rows)
-  const prevViolationsLenRef = useRef(0);
+  // ─── Telemetry lifecycle ─────────────────────────────────
   useEffect(() => {
-    if (violations.length > prevViolationsLenRef.current) {
-      const latest = violations[violations.length - 1];
-      if (!latest.fromServer) {
-        reportViolation(latest.type, latest.message);
-      }
-    }
-    prevViolationsLenRef.current = violations.length;
-  }, [violations, reportViolation]);
+    telemetryPublisher.start(examId, attemptId);
+    return () => {
+      telemetryPublisher.stop();
+    };
+  }, [examId, attemptId]);
 
   const { hardwareLock, bannedApps, screenCount, keyLogs, clearHardwareLock } = useExamLockdown({
     wizardPhase: 5,
     config,
     examId,
     submitting,
-    addViolation,
     setIsBlurred,
     setBlurReason,
   });
@@ -150,7 +112,7 @@ export function ExamSession({
   // Audio monitoring for speech detection during exam
   const { speechDetected: _speechDetected, isRecording: _isRecordingAudio, clipCount: _audioClipCount } = useAudioMonitor({
     stream: cameraStream,
-    enabled: !submitting && Boolean(cameraStream),
+    enabled: !submitting && Boolean(cameraStream) && config?.requireMic === true,
     examId,
     attemptId,
   });
@@ -172,7 +134,7 @@ export function ExamSession({
 
   useFaceMonitor(
     cameraStream,
-    Boolean(cameraStream),
+    Boolean(cameraStream) && config?.requireCamera !== false && config?.monitorGaze === true,
     handleFrameRender,
     examId,
     attemptId,
@@ -184,7 +146,7 @@ export function ExamSession({
   useEffect(() => {
     if (monitorWarning && monitorWarning !== "Đang đồng bộ luồng theo dõi AI chống gian lận...") {
       if (lastToastWarningRef.current !== monitorWarning) {
-        useExamSocketStore.getState().logEvent("face_warning", { message: monitorWarning });
+        // Face warnings now go via telemetry (face_gaze events in use-face-monitor)
         if (DEVELOPMENT_MODE.ENABLED && NO_LOCKSCREEN_WHEN_DEV_MODE) {
           toast.error(`[Dev Bypass] ${monitorWarning}`);
         }
@@ -234,7 +196,7 @@ export function ExamSession({
         videoTrack.onended = () => {
           setIsScreenSharing(false);
           if (!submitting) {
-            addViolation("screen_share_stopped", "Bạn đã tắt chia sẻ màn hình trong lúc thi.");
+            telemetryPublisher.send("screen_share_stopped", {});
           }
         };
       }
@@ -244,17 +206,17 @@ export function ExamSession({
       stopScreenCapture();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submitting, addViolation]);
+  }, [submitting]);
 
-  // Track mouse leaving the window (throttled to once every 10s)
+  // Track mouse leaving the window (throttled to once every 5s)
   const lastCursorLeftRef = useRef(0);
   useEffect(() => {
     const handleMouseLeave = (e: MouseEvent) => {
       if (e.clientY <= 0 || e.clientX <= 0 || (e.clientX >= window.innerWidth || e.clientY >= window.innerHeight)) {
         const now = Date.now();
-        if (now - lastCursorLeftRef.current < 10000) return; // throttle 10s
+        if (now - lastCursorLeftRef.current < 5000) return; // throttle 5s
         lastCursorLeftRef.current = now;
-        addViolation('cursor_left', 'Di chuyển chuột ra khỏi màn hình thi.');
+        telemetryPublisher.send('cursor_left', { x: e.clientX, y: e.clientY });
       }
     };
 
@@ -262,7 +224,7 @@ export function ExamSession({
     return () => {
       document.removeEventListener("mouseleave", handleMouseLeave);
     };
-  }, [addViolation]);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -533,20 +495,20 @@ export function ExamSession({
       livekitPublisher
         .publishCamera(cameraStream, {
           includeVideo: !mobileRelayOnly,
-          includeAudio: true,
+          includeAudio: config?.requireMic === true,
         })
         .catch((err) => console.warn("[ExamTake] Failed to publish camera to LiveKit:", err));
     }
-  }, [cameraStream, isLiveKitConnected, mobileRelayOnly]);
+  }, [cameraStream, isLiveKitConnected, mobileRelayOnly, config?.requireMic]);
 
   // ─── LiveKit: publish screen when sharing starts and connected ──
   useEffect(() => {
-    if (isScreenSharing && screenStreamRef.current && isLiveKitConnected) {
+    if (config?.requireScreenShare === true && isScreenSharing && screenStreamRef.current && isLiveKitConnected) {
       livekitPublisher.publishScreen(screenStreamRef.current).catch(err =>
         console.warn('[ExamTake] Failed to publish screen to LiveKit:', err)
       );
     }
-  }, [isScreenSharing, isLiveKitConnected]);
+  }, [isScreenSharing, isLiveKitConnected, config?.requireScreenShare]);
 
   const dismissBlur = async () => {
     // Activate cooldown to prevent violation cascade during fullscreen transition
@@ -610,6 +572,7 @@ export function ExamSession({
   const handleShortAnswerChange = (questionId: number, content: string) => {
     const answer: Answer = { question_id: questionId, answer_content: content };
     setAnswers((prev) => new Map(prev).set(questionId, answer));
+    useExamSocketStore.getState().logEvent('text_typed', { questionId, length: content.length });
     saveAnswer(questionId, null, content);
   };
 
@@ -617,6 +580,7 @@ export function ExamSession({
     const content = value ? "true" : "false";
     const answer: Answer = { question_id: questionId, answer_content: content };
     setAnswers((prev) => new Map(prev).set(questionId, answer));
+    useExamSocketStore.getState().logEvent('answer_selected', { questionId, optionValue: content });
     saveAnswer(questionId, null, content);
   };
 
@@ -624,6 +588,7 @@ export function ExamSession({
     const json = JSON.stringify(slots);
     const answer: Answer = { question_id: questionId, answer_content: json };
     setAnswers((prev) => new Map(prev).set(questionId, answer));
+    useExamSocketStore.getState().logEvent('text_typed', { questionId, slotsCount: slots.length });
     saveAnswer(questionId, null, json);
   };
 
@@ -634,6 +599,7 @@ export function ExamSession({
       else next.add(questionId);
       return next;
     });
+    useExamSocketStore.getState().logEvent('flag_toggled', { questionId });
     try {
       await api.post(
         `/student/exams/${examId}/take/${attemptId}/flag`,
@@ -662,6 +628,7 @@ export function ExamSession({
     }
 
     setSubmitting(true);
+    useExamSocketStore.getState().logEvent('exam_submit', { auto });
     try {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 

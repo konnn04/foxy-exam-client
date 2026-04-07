@@ -11,7 +11,7 @@ import {
 } from "@/config";
 import api from "@/lib/api";
 import { useProctorStore } from "@/stores/use-proctor-store";
-import { useExamSocketStore } from "@/hooks/use-exam-socket";
+import { telemetryPublisher } from "@/lib/telemetry-publisher";
 
 export interface FaceStatus {
   isLooking: boolean;
@@ -41,6 +41,12 @@ export function useFaceMonitor(
   const nullFrameCounterRef = useRef(0);
   const lastProcessTimeRef = useRef(0);
   const eyeLookAwayStartTimeRef = useRef(0);
+  const faceWarmupStartedAtRef = useRef(0);
+  const focusStateRef = useRef<"focused" | "lost">("focused");
+  const focusLostAtRef = useRef(0);
+  const focusLostReasonsRef = useRef<string[]>([]);
+  const pendingFocusLostAtRef = useRef(0);
+  const pendingFocusRestoreAtRef = useRef(0);
 
   // Mouth movement (talking) detection refs
   const mouthOpenHistoryRef = useRef<number[]>([]);
@@ -55,6 +61,12 @@ export function useFaceMonitor(
 
   useEffect(() => {
     if (!active || !stream) return;
+    faceWarmupStartedAtRef.current = performance.now();
+    focusStateRef.current = "focused";
+    focusLostAtRef.current = 0;
+    focusLostReasonsRef.current = [];
+    pendingFocusLostAtRef.current = 0;
+    pendingFocusRestoreAtRef.current = 0;
     const video = document.createElement("video");
     video.autoplay = true;
     video.playsInline = true;
@@ -63,6 +75,12 @@ export function useFaceMonitor(
     videoRef.current = video;
 
     return () => {
+      faceWarmupStartedAtRef.current = 0;
+      focusStateRef.current = "focused";
+      focusLostAtRef.current = 0;
+      focusLostReasonsRef.current = [];
+      pendingFocusLostAtRef.current = 0;
+      pendingFocusRestoreAtRef.current = 0;
       video.pause();
       video.srcObject = null;
       videoRef.current = null;
@@ -101,6 +119,10 @@ export function useFaceMonitor(
 
     const now = performance.now();
     lastProcessTimeRef.current = now;
+    const faceWarmupMs = 10_000;
+    const inFaceWarmup =
+      faceWarmupStartedAtRef.current > 0 &&
+      now - faceWarmupStartedAtRef.current < faceWarmupMs;
 
     if (video.videoWidth > 0 && video.currentTime !== lastVideoTimeRef.current) {
       lastVideoTimeRef.current = video.currentTime;
@@ -179,17 +201,18 @@ export function useFaceMonitor(
             const mean = history.reduce((a, b) => a + b, 0) / history.length;
             const variance = history.reduce((a, b) => a + (b - mean) ** 2, 0) / history.length;
 
-            if (variance > MOUTH_DETECTION.VARIANCE_THRESHOLD) {
+            const sustainedOpen = jawOpen > (MOUTH_DETECTION.JAW_OPEN_THRESHOLD + 0.08);
+            if (variance > MOUTH_DETECTION.VARIANCE_THRESHOLD || sustainedOpen) {
               if (mouthTalkingStartRef.current === 0) {
                 mouthTalkingStartRef.current = now;
               } else if (now - mouthTalkingStartRef.current > MOUTH_DETECTION.SUSTAINED_MS) {
                 mouthTalking = true;
                 if (now - lastMouthLogRef.current > MOUTH_DETECTION.LOG_COOLDOWN_MS) {
                   lastMouthLogRef.current = now;
-                  useExamSocketStore.getState().logEvent("mouth_movement_detected", {
+                  telemetryPublisher.emit("mouth_movement", {
                     jawOpen: +jawOpen.toFixed(3),
                     variance: +variance.toFixed(5),
-                    localTime: new Date().toISOString(),
+                    sustainedOpen,
                   });
                 }
               }
@@ -201,22 +224,67 @@ export function useFaceMonitor(
           }
         }
 
-        // ─── Log face monitoring events with cooldown ─────────────
+        // ─── Log face monitoring events via telemetry ─────────────
         const logFaceEvent = (eventType: string, data?: Record<string, any>) => {
+          if (inFaceWarmup) return;
           const last = lastFaceEventLogRef.current[eventType] ?? 0;
           if (now - last > FACE_EVENT_LOG.COOLDOWN_MS) {
             lastFaceEventLogRef.current[eventType] = now;
-            useExamSocketStore.getState().logEvent(eventType, {
-              ...data,
-              localTime: new Date().toISOString(),
-            });
+            telemetryPublisher.emit(eventType, data);
           }
         };
 
-        if (!isGoodDistance) logFaceEvent("face_too_close", { faceHeight });
+        // Edge-only gaze telemetry to avoid flooding timeline:
+        // emit only when attention state changes (lost/restored), not per-frame/per-second.
+        if (!inFaceWarmup) {
+          const FOCUS_LOST_DEBOUNCE_MS = 1500;
+          const FOCUS_RESTORED_DEBOUNCE_MS = 1500;
+          const reasons: string[] = [];
+          if (!isLooking) reasons.push("not_looking");
+          if (eyeLookAway) reasons.push("eye_away");
+          const isFocusLost = reasons.length > 0;
+
+          if (isFocusLost) {
+            pendingFocusRestoreAtRef.current = 0;
+            if (focusStateRef.current !== "lost") {
+              if (pendingFocusLostAtRef.current === 0) {
+                pendingFocusLostAtRef.current = now;
+              } else if (now - pendingFocusLostAtRef.current >= FOCUS_LOST_DEBOUNCE_MS) {
+                focusStateRef.current = "lost";
+                focusLostAtRef.current = now;
+                focusLostReasonsRef.current = reasons;
+                telemetryPublisher.emit("face_focus_lost", {
+                  reasons,
+                  pitch: pitchDeg,
+                  yaw: yawDeg,
+                  centered: isCentered,
+                  goodDistance: isGoodDistance,
+                });
+                pendingFocusLostAtRef.current = 0;
+              }
+            }
+          } else {
+            pendingFocusLostAtRef.current = 0;
+            if (focusStateRef.current === "lost") {
+              if (pendingFocusRestoreAtRef.current === 0) {
+                pendingFocusRestoreAtRef.current = now;
+              } else if (now - pendingFocusRestoreAtRef.current >= FOCUS_RESTORED_DEBOUNCE_MS) {
+                const lostMs = Math.max(0, now - focusLostAtRef.current);
+                telemetryPublisher.emit("face_focus_restored", {
+                  lostMs: Math.round(lostMs),
+                  reasons: focusLostReasonsRef.current,
+                });
+                focusStateRef.current = "focused";
+                focusLostAtRef.current = 0;
+                focusLostReasonsRef.current = [];
+                pendingFocusRestoreAtRef.current = 0;
+              }
+            }
+          }
+        }
+
+        if (!isGoodDistance) logFaceEvent("face_too_close", { faceHeight: maxY - minY });
         if (!isCentered) logFaceEvent("face_not_centered", { centerX, centerY });
-        if (!isLooking) logFaceEvent("face_not_looking", { pitch: pitchDeg, yaw: yawDeg });
-        if (eyeLookAway) logFaceEvent("eye_look_away");
         if (mouthTalking) logFaceEvent("talking_detected", { method: "mouth_visual" });
 
         let newWarning = "";
@@ -247,12 +315,26 @@ export function useFaceMonitor(
           if (currentWarning !== "Hệ thống không tìm thấy khuôn mặt của bạn." && useProctorStore.getState().faceAuthLockedMsg === "") {
             useProctorStore.getState().setMonitorWarning("Hệ thống không tìm thấy khuôn mặt của bạn.");
 
+            if (!inFaceWarmup && focusStateRef.current !== "lost") {
+              if (pendingFocusLostAtRef.current === 0) {
+                pendingFocusLostAtRef.current = now;
+              } else if (now - pendingFocusLostAtRef.current >= 1500) {
+                focusStateRef.current = "lost";
+                focusLostAtRef.current = now;
+                focusLostReasonsRef.current = ["face_not_found"];
+                telemetryPublisher.emit("face_focus_lost", {
+                  reasons: ["face_not_found"],
+                  nullFrames: nullFrameCounterRef.current,
+                });
+                pendingFocusLostAtRef.current = 0;
+              }
+            }
+
             const last = lastFaceEventLogRef.current["face_not_found"] ?? 0;
-            if (now - last > FACE_EVENT_LOG.COOLDOWN_MS) {
+            if (!inFaceWarmup && now - last > FACE_EVENT_LOG.COOLDOWN_MS) {
               lastFaceEventLogRef.current["face_not_found"] = now;
-              useExamSocketStore.getState().logEvent("face_not_found", {
+              telemetryPublisher.emit("face_not_found", {
                 nullFrames: nullFrameCounterRef.current,
-                localTime: new Date().toISOString(),
               });
             }
           }
