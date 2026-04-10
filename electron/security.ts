@@ -3,16 +3,18 @@ import { BrowserWindow } from "electron";
 type HardeningOptions = {
   isProduction: boolean;
   devServerUrl?: string;
+  /** FOXY_EXAM_DEBUG=1 — allow DevTools and debug shortcuts in packaged builds. */
+  allowDevTools?: boolean;
 };
 
 export const applyWindowSecurity = (
   mainWindow: BrowserWindow,
-  { isProduction, devServerUrl }: HardeningOptions
+  { isProduction, devServerUrl, allowDevTools = false }: HardeningOptions
 ) => {
   mainWindow.setContentProtection(true);
 
   mainWindow.webContents.on("devtools-opened", () => {
-    if (isProduction) {
+    if (isProduction && !allowDevTools) {
       mainWindow.webContents.closeDevTools();
     }
     mainWindow.webContents.send("devtools-opened");
@@ -29,6 +31,19 @@ export const applyWindowSecurity = (
     event.preventDefault();
   });
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const allowed = (devServerUrl && url.startsWith(devServerUrl)) || url.startsWith("file://");
+    if (!allowed) {
+      event.preventDefault();
+    }
+  });
+
+  if (allowDevTools) {
+    return;
+  }
+
   mainWindow.webContents.on("before-input-event", (event, input) => {
     const key = input.key.toLowerCase();
     const ctrlOrCmd = input.control || input.meta;
@@ -40,15 +55,6 @@ export const applyWindowSecurity = (
       key === "f5" || (ctrlOrCmd && (key === "r" || (shift && key === "r")));
 
     if (blockedDebugCombo || blockedReloadCombo) {
-      event.preventDefault();
-    }
-  });
-
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    const allowed = (devServerUrl && url.startsWith(devServerUrl)) || url.startsWith("file://");
-    if (!allowed) {
       event.preventDefault();
     }
   });

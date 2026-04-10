@@ -4,8 +4,16 @@ import { app, BrowserWindow } from "electron";
 import { configureMediaPermissions } from "./media-permissions";
 import { createMainWindow } from "./main-window";
 import { registerIpcHandlers } from "./ipc-handlers";
+import { appendMainLog } from "./diagnostic-log";
 
 initSentryMain();
+
+process.on("uncaughtException", (err) => {
+  appendMainLog(`uncaughtException: ${err?.stack ?? String(err)}`);
+});
+process.on("unhandledRejection", (reason) => {
+  appendMainLog(`unhandledRejection: ${reason instanceof Error ? reason.stack : String(reason)}`);
+});
 
 let mainWindow: BrowserWindow | null = null;
 
