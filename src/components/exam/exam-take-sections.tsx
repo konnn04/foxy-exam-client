@@ -33,6 +33,7 @@ import { useTranslation } from "react-i18next";
 import { MarkdownExamContent } from "@/components/exam/markdown-exam-content";
 import { isLeafAnswered } from "@/lib/exam-answer-utils";
 import { setExamLocale } from "@/i18n";
+import { useEffect } from "react";
 
 export interface ExamTopNavProps {
   examTitle: string;
@@ -680,6 +681,53 @@ export function ExamOverlay({
         </div>
       )}
     </>
+  );
+}
+
+interface KeyLogItem {
+  id: string;
+  key: string;
+}
+
+export function KeyboardLogBar() {
+  const [keys, setKeys] = useState<KeyLogItem[]>([]);
+
+  useEffect(() => {
+    const handleKey = (e: any) => {
+      const keyDetail = e.detail;
+      const newKey: KeyLogItem = { id: Date.now().toString() + Math.random(), key: keyDetail };
+      
+      setKeys(prev => {
+        const next = [...prev, newKey];
+        if (next.length > 30) return next.slice(next.length - 30);
+        return next;
+      });
+
+      setTimeout(() => {
+        setKeys(prev => prev.filter(k => k.id !== newKey.id));
+      }, 3000); // fade out after 3 seconds
+    };
+
+    window.addEventListener("exam-keypressed", handleKey);
+    return () => window.removeEventListener("exam-keypressed", handleKey);
+  }, []);
+
+  if (keys.length === 0) return null;
+
+  return (
+    <div className="h-7 bg-zinc-900 border-t border-zinc-800 shrink-0 flex items-center px-4 justify-start z-30 transition-all w-full">
+      <div className="flex gap-1.5 items-center flex-wrap overflow-hidden h-full w-full">
+        <span className="text-[10px] text-zinc-500 mr-1 font-mono uppercase tracking-wider shrink-0">Lịch sử phím:</span>
+        {keys.map(k => (
+          <span 
+            key={k.id} 
+            className="animate-in fade-in zoom-in duration-200 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded px-1.5 py-0.5 text-[10px] font-mono min-w-[20px] text-center whitespace-nowrap overflow-hidden text-ellipsis max-w-32 shrink-0"
+          >
+            {k.key}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 

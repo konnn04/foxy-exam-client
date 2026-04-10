@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { setExamLocale } from "@/i18n";
 import { useTheme } from "@/hooks/use-theme";
@@ -30,15 +31,26 @@ import {
   ExternalLink,
   User,
   ShieldCheck,
+  Bug,
 } from "lucide-react";
+import * as Sentry from "@sentry/electron/renderer";
 import { API_CONFIG } from "@/config";
+import { AvatarCropper } from "@/components/ui/avatar-cropper";
+import { useToastCustom } from "@/hooks/use-toast-custom";
 
 const PORTAL_URL = API_CONFIG.OAUTH_BASE_URL;
 
 export default function SettingsPage() {
   const { t, i18n } = useTranslation();
   const { theme, setTheme } = useTheme();
-  const { user } = useUser();
+  const toast = useToastCustom();
+  const { user, fetchMe } = useUser();
+  const showSentryDevPanel =
+    import.meta.env.DEV &&
+    String(import.meta.env.VITE_SENTRY_ENABLE_DEV ?? "").toLowerCase() === "true" &&
+    String(import.meta.env.VITE_SENTRY_DSN ?? "").trim() !== "";
+  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
+  const [isCropperOpen, setIsCropperOpen] = useState(false);
 
   const currentLang = i18n.language?.startsWith("vi") ? "vi" : "en";
 
@@ -77,12 +89,41 @@ export default function SettingsPage() {
                 <p className="text-sm text-muted-foreground">@{user.username}</p>
               )}
             </div>
-            <Button variant="outline" size="sm" asChild>
-              <a href={`${PORTAL_URL}/profile`} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4 mr-1.5" />
-                {t("common.edit")}
-              </a>
-            </Button>
+            
+            <div className="flex flex-col gap-2">
+              <label className="cursor-pointer">
+                <Button variant="outline" size="sm" asChild>
+                  <span>
+                    <User className="h-4 w-4 mr-1.5" />
+                    Thay ảnh đại diện
+                  </span>
+                </Button>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        setCropImageSrc(reader.result as string);
+                        setIsCropperOpen(true);
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              
+              <Button variant="outline" size="sm" asChild>
+                <a href={`${PORTAL_URL}/profile`} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-4 w-4 mr-1.5" />
+                  {t("common.edit")}
+                </a>
+              </Button>
+            </div>
           </div>
 
           <Separator />
@@ -172,6 +213,44 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
+      {showSentryDevPanel && (
+        <Card className="border-amber-500/40">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Bug className="h-5 w-5" />
+              Sentry (dev only)
+            </CardTitle>
+            <CardDescription>
+              Gửi sự kiện thử lên project Sentry (environment: development). Xem Issues trong vài giây.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                Sentry.captureMessage("foxy-exam manual sentry test (renderer)", "info");
+                toast.success("Đã gửi message (renderer). Kiểm tra Sentry → Issues.");
+              }}
+            >
+              Gửi message thử
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                Sentry.captureException(new Error("foxy-exam manual sentry test (renderer error)"));
+                toast.success("Đã gửi exception (renderer). Kiểm tra Sentry → Issues.");
+              }}
+            >
+              Gửi exception thử
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardContent className="pt-6">
           <div className="text-center text-sm text-muted-foreground space-y-1">
@@ -180,6 +259,38 @@ export default function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {cropImageSrc && (
+        <AvatarCropper
+          open={isCropperOpen}
+          imageSrc={cropImageSrc}
+          onClose={() => setIsCropperOpen(false)}
+          onCropComplete={async (blob) => {
+            setIsCropperOpen(false);
+            const file = new File([blob], 'avatar.jpg', { type: 'image/jpeg' });
+            const formData = new FormData();
+            formData.append('avatar', file);
+
+            try {
+              const res = await fetch(`${API_CONFIG.BASE_URL}/auth/me/avatar`, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${localStorage.getItem('foxy_exam_token')}`,
+                },
+                body: formData,
+              });
+              if (res.ok) {
+                // re-fetch user
+                void fetchMe();
+              } else {
+                console.error("Avatar upload failed");
+              }
+            } catch (err) {
+              console.error(err);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

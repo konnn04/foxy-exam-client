@@ -246,6 +246,19 @@
     "streamCamera": "Camera stream: {{fps}} fps, max height {{h}}px",
     "streamScreen": "Screen stream: {{fps}} fps, max height {{h}}px",
     "enabled": "On",
-    "disabled": "Off"
+    "disabled": "Off",
+    "levelDesc": "Overall exam proctoring level (None, Standard, Strict).",
+    "requireAppDesc": "Forces exam to be taken in the desktop application rather than the web browser to prevent software cheating.",
+    "requireCameraDesc": "The system will record and analyze behavior via webcam throughout the exam.",
+    "requireScreenDesc": "Your entire computer screen will be shared and recorded for proctor monitoring.",
+    "noMultiMonitorDesc": "Using more than 1 monitor is forbidden. Disconnect secondary monitors to take the exam.",
+    "monitorGazeDesc": "AI tracks gaze to warn if you look away from the exam space for too long.",
+    "requireMicDesc": "Records room audio for AI speech detection and helps proctors identify unusual noises.",
+    "requireFaceAuthDesc": "Uses AI to match your actual face with your registered profile photo before entry.",
+    "detectBannedAppsDesc": "The system continuously scans and prevents running restricted applications (Discord, TeamViewer, Zalo, etc.).",
+    "detectBannedObjectsDesc": "AI analyzes camera feed to detect prohibited objects like Smartphones, Headphones, etc.",
+    "lockDeviceDesc": "Locks the exam attempt to a specific browser/device. Prevents device swapping mid-session.",
+    "streamCameraDesc": "Transmission quality of AI Camera video sent to the Server.",
+    "streamScreenDesc": "Transmission quality of Screen recording video sent to the Server."
   }
 }

@@ -246,6 +246,19 @@
     "streamCamera": "Luồng camera: {{fps}} fps, tối đa {{h}}px chiều cao",
     "streamScreen": "Luồng màn hình: {{fps}} fps, tối đa {{h}}px chiều cao",
     "enabled": "Bật",
-    "disabled": "Tắt"
+    "disabled": "Tắt",
+    "levelDesc": "Mức độ giám sát tổng thể của bài thi (None, Standard, Strict).",
+    "requireAppDesc": "Bắt buộc thi bằng Ứng dụng Desktop thay vì trình duyệt Web để ngăn chặn gian lận phần mềm.",
+    "requireCameraDesc": "Hệ thống sẽ ghi hình và phân tích cử chỉ hành vi qua Webcam trong suốt quá trình thi.",
+    "requireScreenDesc": "Toàn bộ màn hình máy tính của bạn sẽ được chia sẻ và ghi hình để giám thị theo dõi.",
+    "noMultiMonitorDesc": "Cấm sử dụng nhiều hơn 1 màn hình. Bạn phải ngắt kết nối các màn hình phụ để vào thi.",
+    "monitorGazeDesc": "AI theo dõi hướng ánh mắt để cảnh báo nếu thí sinh nhìn ra ngoài không gian làm bài quá lâu.",
+    "requireMicDesc": "Ghi âm thanh phòng thi để hệ thống AI phát hiện tiếng nói chuyện và hỗ trợ giám thị nhận diện tiếng ồn bất thường.",
+    "requireFaceAuthDesc": "Sử dụng AI khớp khuôn mặt thật của thí sinh với ảnh hồ sơ thẻ sinh viên trước khi vào phòng thi.",
+    "detectBannedAppsDesc": "Hệ thống sẽ liên tục quét và ngăn thí sinh chạy các ứng dụng bị cấm (như Discord, TeamViewer, Zalo, vv...).",
+    "detectBannedObjectsDesc": "AI phân tích hình ảnh AI Camera để phát hiện vật thể cấm như Smartphone, Tai nghe, vv...",
+    "lockDeviceDesc": "Khóa bài thi với thiết bị (Browser/Máy tính) cụ thể. Ngăn thí sinh đổi máy giữa phiên.",
+    "streamCameraDesc": "Chất lượng đường truyền video AI Camera giám sát từ thiết bị lên Server.",
+    "streamScreenDesc": "Chất lượng đường truyền chia sẻ Video Màn hình bài làm lên Server."
   }
 }

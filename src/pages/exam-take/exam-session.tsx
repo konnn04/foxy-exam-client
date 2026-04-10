@@ -7,7 +7,7 @@ import { livekitPublisher } from "@/lib/livekit-publisher";
 import { telemetryPublisher } from "@/lib/telemetry-publisher";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import { useAlertDialog } from "@/hooks/use-alert-dialog";
-import { ExamMainContent, ExamOverlay, ExamTopNav, ExamStatusBar } from "@/components/exam/exam-take-sections";
+import { ExamMainContent, ExamOverlay, ExamTopNav, ExamStatusBar, KeyboardLogBar } from "@/components/exam/exam-take-sections";
 import { WebcamPopup, WebcamPopupHandle } from "@/components/exam/webcam-popup";
 import { useFaceMonitor } from "@/hooks/use-face-monitor";
 import { useExamLockdown } from "@/hooks/use-exam-lockdown";
@@ -749,6 +749,8 @@ export function ExamSession({
           />
         </div>
       </div>
+
+      <KeyboardLogBar />
 
       <ExamStatusBar
         violationsCount={violations.length}

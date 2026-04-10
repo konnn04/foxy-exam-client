@@ -28,8 +28,8 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
   const FACE_AUTH_WARMUP_MS = 4000;
   const STRAIGHT_HOLD_MS = 1000;
   const SIDE_HOLD_MS = 700;
-  const MIN_BRIGHTNESS = 42; // avoid under-exposed frames
-  const MIN_SHARPNESS = 8;   // avoid blurry frames
+  const MIN_BRIGHTNESS = 30; // lowered to avoid false rejections
+  const MIN_SHARPNESS = 5;   // lowered to avoid blurry false negatives
 
   
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
@@ -161,7 +161,7 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
     const h = 90;
     canvas.width = w;
     canvas.height = h;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return null;
     ctx.drawImage(video, 0, 0, w, h);
     const img = ctx.getImageData(0, 0, w, h).data;
@@ -194,7 +194,7 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
     
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (ctx) {
       const quality = getFrameQuality();
       if (!quality || quality.brightness < MIN_BRIGHTNESS || quality.sharpness < MIN_SHARPNESS) {
@@ -216,16 +216,16 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
       // Must look straight for ~0.5s
       const isStraight = Math.abs(pitch) < 15 && Math.abs(yaw) < 15;
       if (isStraight) {
-        setProgress(Math.min(33, (timeInPhase / 500) * 33));
+        const pct = Math.min(33, (timeInPhase / 500) * 33);
+        setProgress(pct);
         if (timeInPhase > STRAIGHT_HOLD_MS) {
-          if (!captureFrame()) {
+          // Try capture, but don't reset progress if it fails - just retry next frame
+          if (captureFrame()) {
+            phaseRef.current = 'left';
+            setPhase('left');
             phaseStartTimeRef.current = performance.now();
-            setProgress(0);
-            return;
           }
-          phaseRef.current = 'left';
-          setPhase('left');
-          phaseStartTimeRef.current = performance.now();
+          // If captureFrame fails, we just stay in 'straight' and try again next frame
         }
       } else {
         phaseStartTimeRef.current = performance.now(); // reset if not straight
@@ -238,14 +238,11 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
       if (isLeft) {
         setProgress(33 + Math.min(33, (timeInPhase / 500) * 33));
         if (timeInPhase > SIDE_HOLD_MS) {
-          if (!captureFrame()) {
+          if (captureFrame()) {
+            phaseRef.current = 'right';
+            setPhase('right');
             phaseStartTimeRef.current = performance.now();
-            setProgress(33);
-            return;
           }
-          phaseRef.current = 'right';
-          setPhase('right');
-          phaseStartTimeRef.current = performance.now();
         }
       } else {
         phaseStartTimeRef.current = performance.now();
@@ -258,14 +255,11 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
       if (isRight) {
         setProgress(66 + Math.min(34, (timeInPhase / 500) * 34));
         if (timeInPhase > SIDE_HOLD_MS) {
-          if (!captureFrame()) {
-            phaseStartTimeRef.current = performance.now();
-            setProgress(66);
-            return;
+          if (captureFrame()) {
+            phaseRef.current = 'verifying';
+            setPhase('verifying');
+            verifyIdentity();
           }
-          phaseRef.current = 'verifying';
-          setPhase('verifying');
-          verifyIdentity();
         }
       } else {
         phaseStartTimeRef.current = performance.now();

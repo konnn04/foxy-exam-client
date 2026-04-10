@@ -7,6 +7,8 @@ import {
 } from "@/config";
 import { telemetryPublisher } from "@/lib/telemetry-publisher";
 
+const EXAM_FULLSCREEN_EXIT_BLUR_MSG = "Chế độ xem toàn màn hình đã bị tắt.";
+
 interface UseExamLockdownProps {
   wizardPhase: number;
   config: ExamTrackingConfig | null;
@@ -43,7 +45,6 @@ export function useExamLockdown({
   const [screenCount, setScreenCount] = useState<number>(1);
 
   const keyLogsRef = useRef<{ time: string; type: string; data: string }[]>([]);
-  const frameCountRef = useRef(0);
   const lastMetricsTimeRef = useRef(performance.now());
   const fpsRef = useRef(0);
 
@@ -54,26 +55,21 @@ export function useExamLockdown({
   // Initial display ID (for monitor_changed detection)
   const initialDisplayIdRef = useRef<number | null>(null);
   const vmCheckDoneRef = useRef(false);
+  /** Native Electron fullscreen lost (document.fullscreenElement stays null). */
+  const nativeWindowFsLostRef = useRef(false);
 
-  // ─── FPS Counter ───────────────────────────────────────────
-  useEffect(() => {
-    let animationFrameId: number;
-    const loop = () => {
-      frameCountRef.current++;
-      animationFrameId = requestAnimationFrame(loop);
-    };
-    animationFrameId = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(animationFrameId);
-  }, []);
+  // FPS Counter removed to save CPU
 
   // ─── Global Input Hooks: Emit events, NOT violations ───────
   useEffect(() => {
     if (wizardPhase < 5) return;
     const trackingLvl = config?.level || "strict";
+    const isFocusMode = config?.is_focus_mode ?? true;
+    const isSecureContent = config?.is_secure_content ?? true;
 
     // Tab switch (visibilitychange)
     const handleVisibilityChange = () => {
-      if (trackingLvl === "none") return;
+      if (trackingLvl === "none" || !isFocusMode) return;
       if (document.hidden) {
         telemetryPublisher.send("tab_switch", {});
       } else {
@@ -83,12 +79,12 @@ export function useExamLockdown({
 
     // Window blur/focus
     const handleBlur = () => {
-      if (trackingLvl !== "none") {
+      if (trackingLvl !== "none" && isFocusMode) {
         telemetryPublisher.send("window_blur", {});
       }
     };
     const handleFocus = () => {
-      if (trackingLvl !== "none") {
+      if (trackingLvl !== "none" && isFocusMode) {
         telemetryPublisher.emit("window_focus", {});
       }
     };
@@ -97,6 +93,18 @@ export function useExamLockdown({
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
     };
+
+    // Hardware/Window Protections based on Config
+    if (window.electronAPI) {
+      if (trackingLvl === "strict") {
+        if (isFocusMode && window.electronAPI.setAlwaysOnTop) {
+          window.electronAPI.setAlwaysOnTop(true);
+        }
+        if (isSecureContent && window.electronAPI.setContentProtection) {
+          window.electronAPI.setContentProtection(true);
+        }
+      }
+    }
 
     // Global hook (Electron native keyboard/mouse hook)
     if (window.electronAPI?.startGlobalHook && trackingLvl === "strict") {
@@ -110,6 +118,7 @@ export function useExamLockdown({
         });
 
         if (payload.type === "keydown") {
+          window.dispatchEvent(new CustomEvent("exam-keypressed", { detail: payload.data }));
           const lowerKey = payload.data.toLowerCase();
           if (lowerKey === "printscreen") {
             telemetryPublisher.send("screenshot", {});
@@ -143,11 +152,18 @@ export function useExamLockdown({
         if (window.electronAPI?.stopGlobalHook) {
           window.electronAPI.stopGlobalHook();
         }
+        if (window.electronAPI?.setContentProtection) {
+          window.electronAPI.setContentProtection(false);
+        }
+        if (window.electronAPI?.setAlwaysOnTop) {
+          window.electronAPI.setAlwaysOnTop(false);
+        }
       };
     }
 
     // Keyboard shortcuts
     const handleKeyDown = (e: KeyboardEvent) => {
+      window.dispatchEvent(new CustomEvent("exam-keypressed", { detail: e.key }));
       if (e.key === "PrintScreen") {
         e.preventDefault();
         telemetryPublisher.send("screenshot", { source: "keydown_printscreen" });
@@ -171,6 +187,16 @@ export function useExamLockdown({
       if (e.key === "F12") {
         if (!DEVELOPMENT_MODE.ENABLED) e.preventDefault();
       }
+      
+      // Block generic navigations on Production
+      if (!DEVELOPMENT_MODE.ENABLED) {
+        if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "r" || e.key === "F5")) {
+          e.preventDefault();
+        }
+        if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+          e.preventDefault();
+        }
+      }
     };
 
     // Copy/Cut
@@ -181,11 +207,27 @@ export function useExamLockdown({
 
     // Mouse click logging
     const handleMouseDown = (e: MouseEvent) => {
+      if (!DEVELOPMENT_MODE.ENABLED) {
+        if (e.button === 3 || e.button === 4) { // Mouse back/forward
+          e.preventDefault();
+        }
+      }
+
       telemetryPublisher.emit("mouse_click", {
         x: e.clientX,
         y: e.clientY,
         button: e.button,
       });
+
+      // Visual click ripple for recording
+      const ripple = document.createElement("div");
+      ripple.className = "click-ripple";
+      ripple.style.left = `${e.clientX}px`;
+      ripple.style.top = `${e.clientY}px`;
+      document.body.appendChild(ripple);
+      setTimeout(() => {
+        ripple.remove();
+      }, 600);
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -274,6 +316,15 @@ export function useExamLockdown({
       });
     }
 
+    // Get initial Peripheral Device Snapshot
+    if (window.electronAPI.getPeripheralSnapshot) {
+      window.electronAPI.getPeripheralSnapshot().then((devices: any) => {
+        if (devices && Array.isArray(devices)) {
+          telemetryPublisher.emit("device_snapshot", { count: devices.length, devices });
+        }
+      });
+    }
+
     const handleDisplayChanged = (_: any, data: any) => {
       telemetryPublisher.send("display_changed", data);
 
@@ -302,15 +353,21 @@ export function useExamLockdown({
       telemetryPublisher.send("network_changed", data);
     };
 
+    const handlePeripheralChanged = (_: any, data: {action: string, device: any}) => {
+      telemetryPublisher.send("device_changed", data);
+    };
+
     window.electronAPI.onDisplayChanged?.(handleDisplayChanged);
     window.electronAPI.onNetworkChanged?.(handleNetworkChanged);
+    window.electronAPI.onPeripheralChanged?.(handlePeripheralChanged);
 
     return () => {
       window.electronAPI?.stopHwMonitoring?.();
       window.electronAPI?.offDisplayChanged?.(handleDisplayChanged);
       window.electronAPI?.offNetworkChanged?.(handleNetworkChanged);
+      window.electronAPI?.offPeripheralChanged?.(handlePeripheralChanged);
     };
-  }, [wizardPhase, setIsBlurred, setBlurReason]);
+  }, [wizardPhase, setIsBlurred, setBlurReason, config]);
 
   // ─── Hardware Checks: Banned Apps, Screen Count, Perf, Process ──
   useEffect(() => {
@@ -354,8 +411,9 @@ export function useExamLockdown({
               setBannedApps([]);
             } else {
               const appsList = Array.isArray(config?.bannedApps) ? config.bannedApps : [];
+              const whitelist = Array.isArray(config?.bannedAppsWhitelist) ? config.bannedAppsWhitelist : [];
               if (appsList.length > 0) {
-                detectedApps = await window.electronAPI.getRunningBannedApps(appsList);
+                detectedApps = await window.electronAPI.getRunningBannedApps(appsList, whitelist);
                 setBannedApps(detectedApps);
                 if (detectedApps.length > 0) {
                   // Client-side lock immediately (don't wait for Agent)
@@ -421,14 +479,8 @@ export function useExamLockdown({
         });
       }
 
-      // ─── FPS calculation ─────────────────────────────────
-      const now = performance.now();
-      const elapsed = now - lastMetricsTimeRef.current;
-      if (elapsed > 0) {
-        fpsRef.current = Math.round((frameCountRef.current * 1000) / elapsed);
-      }
-      frameCountRef.current = 0;
-      lastMetricsTimeRef.current = now;
+      // Removed FPS calculation to save CPU
+      lastMetricsTimeRef.current = performance.now();
     }, 5000); // Every 5s for process and hardware
 
     // ─── System metrics (CPU/RAM) — every 2s ───────────────
@@ -482,10 +534,10 @@ export function useExamLockdown({
 
           // Client-side lock immediately
           if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_DEV) {
-            toast.error("[Dev Bypass] Chế độ xem toàn màn hình đã bị tắt.");
+            toast.error(`[Dev Bypass] ${EXAM_FULLSCREEN_EXIT_BLUR_MSG}`);
           } else {
             setIsBlurred(true);
-            setBlurReason("Chế độ xem toàn màn hình đã bị tắt.");
+            setBlurReason(EXAM_FULLSCREEN_EXIT_BLUR_MSG);
           }
         }
       } else if (document.fullscreenElement) {
@@ -496,6 +548,63 @@ export function useExamLockdown({
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => {
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, [wizardPhase, submitting, config, toast, setIsBlurred, setBlurReason]);
+
+  // ─── Native fullscreen (Electron): poll BrowserWindow — not tied to Fullscreen API ─
+  useEffect(() => {
+    if (wizardPhase < 5) return;
+
+    const api = window.electronAPI;
+    if (!api?.getWindowLockState || !api.setFullScreen) return;
+
+    const trackingLvl = config?.level || "strict";
+    const isFocusMode = config?.is_focus_mode ?? true;
+    if (trackingLvl === "none" || !isFocusMode) return;
+    if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_FULLSCREEN) return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        let { isFullScreen } = await api.getWindowLockState!();
+        if (!isFullScreen && trackingLvl === "strict" && isFocusMode) {
+          api.setFullScreen(true);
+          if (api.setAlwaysOnTop) api.setAlwaysOnTop(true);
+          await new Promise((r) => setTimeout(r, 400));
+          if (cancelled) return;
+          isFullScreen = (await api.getWindowLockState!()).isFullScreen;
+        }
+
+        if (!isFullScreen && !submitting) {
+          const firstInEpisode = !nativeWindowFsLostRef.current;
+          nativeWindowFsLostRef.current = true;
+          if (firstInEpisode) {
+            telemetryPublisher.send("exit_fullscreen", { source: "native_window" });
+          }
+          if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.NO_LOCKSCREEN_WHEN_DEV) {
+            if (firstInEpisode) {
+              toast.error(`[Dev Bypass] ${EXAM_FULLSCREEN_EXIT_BLUR_MSG}`);
+            }
+          } else {
+            setIsBlurred(true);
+            setBlurReason(EXAM_FULLSCREEN_EXIT_BLUR_MSG);
+          }
+        } else if (isFullScreen && nativeWindowFsLostRef.current) {
+          nativeWindowFsLostRef.current = false;
+          telemetryPublisher.emit("enter_fullscreen", {});
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+
+    void tick();
+    const id = setInterval(tick, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
     };
   }, [wizardPhase, submitting, config, toast, setIsBlurred, setBlurReason]);
 

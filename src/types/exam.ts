@@ -30,6 +30,10 @@ export interface Answer {
 
 export interface ExamTrackingConfig {
   level: "none" | "standard" | "strict" | "custom";
+  /** When false, skip focus / tab visibility telemetry and always-on-top (Electron). */
+  is_focus_mode?: boolean;
+  /** When false, skip content protection / screenshot blocking (Electron). */
+  is_secure_content?: boolean;
   requireApp?: boolean;
   requireScreenShare?: boolean;
   noMultiMonitor?: boolean;
@@ -40,6 +44,8 @@ export interface ExamTrackingConfig {
   detectBannedApps?: boolean;
   detectBannedObjects?: boolean;
   bannedApps?: string[];
+  /** Process-line tokens: if a line matches whitelist, it is never treated as a banned hit (after own-app exclusion). */
+  bannedAppsWhitelist?: string[];
   bannedAppsExceptions?: string[];
   face_verification_interval_seconds?: number;
   lockDevice?: boolean;

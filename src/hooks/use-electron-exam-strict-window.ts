@@ -19,7 +19,6 @@ export function useElectronExamStrictWindow(): void {
     }
 
     try {
-      api.setAlwaysOnTop?.(true);
       api.setFullScreen(true);
     } catch {
       /* plug-in: production error reporting */

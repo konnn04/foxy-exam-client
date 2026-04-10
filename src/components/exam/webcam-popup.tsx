@@ -4,15 +4,17 @@ import { Video, VideoOff, Minimize2, ScanFace } from "lucide-react";
 import type { FaceLandmarkerResult } from "@mediapipe/tasks-vision";
 import { DrawingUtils, FaceLandmarker } from "@mediapipe/tasks-vision";
 import { extractPitchYaw } from "@/lib/mediapipe-service";
-import { DEVELOPMENT_MODE, WEBCAM_POPUP_DIMENSIONS } from "@/config";
+import { DEVELOPMENT_MODE, EXAM_SESSION_BOTTOM_CHROME_PX, WEBCAM_POPUP_DIMENSIONS } from "@/config";
 
-function initialBottomLeftPosition() {
-  if (typeof window === "undefined") return { x: 16, y: 100 };
+function initialBottomRightPosition() {
+  if (typeof window === "undefined") return { x: 400, y: 100 };
+  const w = WEBCAM_POPUP_DIMENSIONS.NORMAL.WIDTH_PX;
   const h = WEBCAM_POPUP_DIMENSIONS.NORMAL.HEIGHT_PX;
-  const statusBarReserve = 40;
+  const margin = 16;
+  const bottom = EXAM_SESSION_BOTTOM_CHROME_PX;
   return {
-    x: 16,
-    y: Math.max(16, window.innerHeight - h - statusBarReserve),
+    x: Math.max(margin, window.innerWidth - w - margin),
+    y: Math.max(margin, window.innerHeight - h - bottom),
   };
 }
 
@@ -34,7 +36,7 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
   
   const [minimized, setMinimized] = useState(false);
   const [showMesh, setShowMesh] = useState(true);
-  const [position, setPosition] = useState(initialBottomLeftPosition);
+  const [position, setPosition] = useState(initialBottomRightPosition);
   const [dragging, setDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
 
@@ -49,10 +51,12 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
       if (!containerRef.current || minimized) return;
       const rect = containerRef.current.getBoundingClientRect();
       const h = rect.height;
-      const statusBarReserve = 40;
+      const w = rect.width;
+      const margin = 16;
+      const bottom = EXAM_SESSION_BOTTOM_CHROME_PX;
       setPosition((p) => ({
-        x: Math.min(p.x, Math.max(0, window.innerWidth - rect.width - 8)),
-        y: Math.min(p.y, Math.max(8, window.innerHeight - h - statusBarReserve)),
+        x: Math.min(Math.max(margin, p.x), Math.max(margin, window.innerWidth - w - margin)),
+        y: Math.min(Math.max(margin, p.y), Math.max(margin, window.innerHeight - h - bottom)),
       }));
     };
     window.addEventListener("resize", onResize);
@@ -74,9 +78,14 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
       if (!containerRef.current) return;
       const cw = containerRef.current.offsetWidth;
       const ch = containerRef.current.offsetHeight;
+      const margin = 16;
+      const bottom = EXAM_SESSION_BOTTOM_CHROME_PX;
       setPosition({
-        x: Math.max(0, Math.min(window.innerWidth - cw, e.clientX - dragOffset.current.x)),
-        y: Math.max(0, Math.min(window.innerHeight - ch, e.clientY - dragOffset.current.y)),
+        x: Math.max(margin, Math.min(window.innerWidth - cw - margin, e.clientX - dragOffset.current.x)),
+        y: Math.max(
+          margin,
+          Math.min(window.innerHeight - ch - bottom, e.clientY - dragOffset.current.y),
+        ),
       });
     };
 
