@@ -41,6 +41,9 @@ export const WEBCAM_POPUP_DIMENSIONS = {
   },
 };
 
+/** Space reserved at bottom during exam: keyboard log bar + status bar + margin */
+export const EXAM_SESSION_BOTTOM_CHROME_PX = 72;
+
 // Responsive utilities
 export const RESPONSIVE = {
   // Mobile breakpoint for use in hooks

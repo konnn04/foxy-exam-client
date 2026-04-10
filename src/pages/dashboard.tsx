@@ -94,6 +94,7 @@ export default function DashboardPage() {
     return status === "in_progress" || e.active_attempt;
   });
 
+  
   return (
     <div className="space-y-6">
       {/* In-progress alert */}

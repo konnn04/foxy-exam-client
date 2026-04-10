@@ -5,6 +5,30 @@ import { Monitor, CheckCircle, ShieldAlert, AlertTriangle, Loader2, Mic } from "
 import { Progress } from "@/components/ui/progress";
 import { DEVELOPMENT_MODE, ENVIRONMENT_CHECK_TIMING } from "@/config";
 
+function releasePrecheckWindowForManualClose(): void {
+  const api = window.electronAPI;
+  if (!api?.setFullScreen || !api?.setAlwaysOnTop) return;
+  if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_FULLSCREEN) return;
+  try {
+    api.setAlwaysOnTop(false);
+    api.setFullScreen(false);
+  } catch {
+    /* plug-in: production error reporting */
+  }
+}
+
+function restorePrecheckStrictWindow(): void {
+  const api = window.electronAPI;
+  if (!api?.setFullScreen || !api?.setAlwaysOnTop) return;
+  if (DEVELOPMENT_MODE.ENABLED && DEVELOPMENT_MODE.BYPASS_FULLSCREEN) return;
+  try {
+    api.setFullScreen(true);
+    api.setAlwaysOnTop(true);
+  } catch {
+    /* plug-in: production error reporting */
+  }
+}
+
 interface EnvironmentCheckProps {
   config: any;
   stream?: MediaStream | null;
@@ -19,6 +43,7 @@ export function EnvironmentCheck({ config, stream, onSuccess, onCancel }: Enviro
   const [scanStatus, setScanStatus] = useState("Đang khởi tạo các kịch bản quét...");
   const [detectedApps, setDetectedApps] = useState<string[]>([]);
   const [isKilling, setIsKilling] = useState(false);
+  const [windowReleasedForManual, setWindowReleasedForManual] = useState(false);
 
   // Mic check states
   const [envScanDone, setEnvScanDone] = useState(false);
@@ -47,10 +72,13 @@ export function EnvironmentCheck({ config, stream, onSuccess, onCancel }: Enviro
              const cnt = await window.electronAPI.getScreenCount();
              if (cnt > 1) hwErr = `Phát hiện ${cnt} màn hình. Vui lòng ngắt kết nối màn hình phụ!`;
           }
-          if (!hwErr && window.electronAPI?.getRunningBannedApps && config?.detectBannedApps) {
+          const scanBannedForPrecheck =
+            config?.detectBannedApps === true || config?.level === "strict";
+          if (!hwErr && window.electronAPI?.getRunningBannedApps && scanBannedForPrecheck) {
             const appsList = Array.isArray(config.bannedApps) ? config.bannedApps : [];
+            const whitelist = Array.isArray(config.bannedAppsWhitelist) ? config.bannedAppsWhitelist : [];
             if (appsList.length > 0) {
-                const apps = await window.electronAPI.getRunningBannedApps(appsList);
+                const apps = await window.electronAPI.getRunningBannedApps(appsList, whitelist);
                 if (apps && apps.length > 0) {
                    hwErr = `Phát hiện phần mềm bị cấm chạy ngầm: ${apps.join(', ')}. Vui lòng tắt ngay!`;
                    setDetectedApps(apps);
@@ -159,6 +187,8 @@ export function EnvironmentCheck({ config, stream, onSuccess, onCancel }: Enviro
   }, [isDone, onSuccess]);
 
   const handleRetry = () => {
+    restorePrecheckStrictWindow();
+    setWindowReleasedForManual(false);
     setIsDone(false);
     setEnvScanDone(false);
     setErrorMsg("");
@@ -169,11 +199,44 @@ export function EnvironmentCheck({ config, stream, onSuccess, onCancel }: Enviro
     setMicVolume(0);
   };
 
+  const handleAllowManualClose = () => {
+    releasePrecheckWindowForManualClose();
+    setWindowReleasedForManual(true);
+    setScanStatus("Đã tắt bám đỉnh / toàn màn hình — dùng Alt+Tab hoặc Task Manager để đóng app.");
+  };
+
   const handleKillApps = async () => {
     if (!window.electronAPI?.killBannedApps || detectedApps.length === 0) return;
+
+    const killable = detectedApps.filter((n) => !n.trim().endsWith("*"));
+    if (killable.length === 0) {
+      releasePrecheckWindowForManualClose();
+      setWindowReleasedForManual(true);
+      setErrorMsg(
+        `Không thể tắt tự động: ${detectedApps.join(", ")}. ` +
+          "Các mục kết thúc bằng * chỉ dùng để phát hiện, không gửi lệnh kill. " +
+          "Cửa sổ thi đã tạm «nhả» để bạn chuyển sang app khác — hãy đóng thủ công, sau đó nhấn «Thử lại»."
+      );
+      return;
+    }
+
     setIsKilling(true);
     try {
-      await window.electronAPI.killBannedApps(detectedApps);
+      const result = await window.electronAPI.killBannedApps(detectedApps);
+      const failed = result?.failed ?? [];
+
+      if (failed.length > 0) {
+        releasePrecheckWindowForManualClose();
+        setWindowReleasedForManual(true);
+        setErrorMsg(
+          `Không thể tắt tự động: ${failed.join(", ")}. ` +
+            "Ứng dụng có thể cần quyền quản trị hoặc đang bảo vệ. " +
+            "Cửa sổ thi đã tạm «nhả» (không bám đỉnh, không fullscreen) — đóng tay trong Task Manager / Alt+Tab, rồi nhấn «Thử lại»."
+        );
+        setIsKilling(false);
+        return;
+      }
+
       setScanStatus("Đã gửi lệnh tắt. Đang quét lại...");
       setTimeout(() => {
         setIsKilling(false);
@@ -181,7 +244,12 @@ export function EnvironmentCheck({ config, stream, onSuccess, onCancel }: Enviro
       }, 1500);
     } catch (e) {
       setIsKilling(false);
-      console.error('Failed to kill apps:', e);
+      releasePrecheckWindowForManualClose();
+      setWindowReleasedForManual(true);
+      setErrorMsg(
+        "Lỗi khi gửi lệnh tắt ứng dụng. Cửa sổ đã tạm «nhả» — hãy đóng phần mềm cấm thủ công, sau đó nhấn «Thử lại»."
+      );
+      console.error("Failed to kill apps:", e);
     }
   };
 
@@ -276,39 +344,57 @@ export function EnvironmentCheck({ config, stream, onSuccess, onCancel }: Enviro
             )}
           </div>
 
-          <div className="flex gap-3 pt-6 mt-6 border-t">
+          <div className="flex flex-col gap-2 pt-6 mt-6 border-t">
+            {windowReleasedForManual && errorMsg && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 text-center font-medium">
+                Chế độ tạm «nhả» cửa sổ đang bật — sau khi đóng app, nhấn «Thử lại» để bật lại toàn màn hình và quét tiếp.
+              </p>
+            )}
+            <div className="flex flex-wrap gap-3">
             {errorMsg && detectedApps.length > 0 && window.electronAPI?.killBannedApps && (
               <Button 
                 variant="destructive" 
-                className="flex-1"
+                className="flex-1 min-w-[140px]"
                 onClick={handleKillApps}
                 disabled={isKilling}
               >
-                {isKilling ? "Đang tắt..." : `⚠ Tắt ngay (${detectedApps.length} app)`}
+                {isKilling ? "Đang tắt..." : `⚠ Tắt tự động (${detectedApps.length})`}
+              </Button>
+            )}
+            {errorMsg && detectedApps.length > 0 && window.electronAPI?.setFullScreen && (
+              <Button
+                type="button"
+                variant="secondary"
+                className="flex-1 min-w-[140px]"
+                onClick={handleAllowManualClose}
+                disabled={windowReleasedForManual}
+              >
+                {windowReleasedForManual ? "Đã nhả cửa sổ" : "Nhả cửa sổ (tắt tay)"}
               </Button>
             )}
             {errorMsg && (
-              <Button variant="outline" className="flex-1" onClick={handleRetry}>
+              <Button variant="outline" className="flex-1 min-w-[140px]" onClick={handleRetry}>
                 Thử lại
               </Button>
             )}
             {onCancel && (
-              <Button variant="outline" className="flex-1" onClick={onCancel} disabled={isDone}>
+              <Button variant="outline" className="flex-1 min-w-[100px]" onClick={onCancel} disabled={isDone}>
                 Hủy
               </Button>
             )}
             {DEVELOPMENT_MODE.ENABLED && (
               <Button 
                 variant="outline" 
-                className="flex-1 border-dashed border-red-500 text-red-500 hover:bg-red-500 hover:text-white"
+                className="flex-1 min-w-[120px] border-dashed border-red-500 text-red-500 hover:bg-red-500 hover:text-white"
                 onClick={onSuccess}
               >
                 [Dev] Bỏ qua
               </Button>
             )}
-            <Button className="flex-1" disabled={!isDone}>
+            <Button className="flex-1 min-w-[160px]" disabled={!isDone}>
               {isDone ? "Hoàn thành. Vào phòng thi ngay!" : (envScanDone ? "Đang kiểm tra mic..." : "Đang kiểm tra môi trường...")}
             </Button>
+            </div>
           </div>
         </div>
 

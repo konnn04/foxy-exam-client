@@ -1,8 +1,11 @@
+import "./runtime";
+import { initSentryMain } from "./sentry-main";
 import { app, BrowserWindow } from "electron";
 import { configureMediaPermissions } from "./media-permissions";
 import { createMainWindow } from "./main-window";
 import { registerIpcHandlers } from "./ipc-handlers";
-import "./runtime";
+
+initSentryMain();
 
 let mainWindow: BrowserWindow | null = null;
 

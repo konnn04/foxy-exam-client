@@ -169,18 +169,32 @@ class TelemetryPublisher {
   private flush() {
     if (this.buffer.length === 0) return;
 
+    if (!livekitPublisher.isConnected) {
+      // Do not clear the buffer if disconnected so we don't lose early events like exam_start 
+      // Ensure buffer doesn't grow indefinitely if LiveKit permanently fails
+      if (this.buffer.length > MAX_BUFFER_SIZE * 5) {
+        this.buffer = this.buffer.slice(-MAX_BUFFER_SIZE * 5); // Keep last N
+      }
+      return;
+    }
+
     const payload = {
       exam_id: this.examId,
       attempt_id: this.attemptId,
-      events: this.buffer,
+      events: [...this.buffer],
       batch_ts: new Date().toISOString(),
     };
 
-    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+    // Optimistically clear buffer but keep a backup in case of failure
+    const backupBuffer = this.buffer;
     this.buffer = [];
 
+    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+
     livekitPublisher.publishTelemetry(bytes, TOPIC).catch((err) => {
-      console.warn("[TelemetryPublisher] Failed to publish:", err);
+      console.warn("[TelemetryPublisher] Failed to publish, restoring buffer:", err);
+      // Restore buffer (putting newer events at the end)
+      this.buffer = [...backupBuffer, ...this.buffer];
     });
   }
 

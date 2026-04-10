@@ -25,7 +25,6 @@ import {
   History,
   LogOut,
   ChevronUp,
-  GraduationCap,
   Settings,
   ExternalLink,
 } from "lucide-react";
@@ -74,7 +73,7 @@ export function AppSidebar() {
               className="cursor-pointer"
             >
               <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <GraduationCap className="size-4" />
+                <img src="assets/icons/icon.png" alt="Logo" className="h-8 w-8" />
               </div>
               <div className="flex flex-col gap-0.5 leading-none">
                 <span className="font-semibold">{t("brand.name")}</span>

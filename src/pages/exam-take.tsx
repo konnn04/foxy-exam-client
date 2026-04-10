@@ -7,6 +7,7 @@ import type { ExamTrackingConfig } from "@/types/exam";
 import { collectDeviceInfo, generateFingerprint } from "@/lib/device-fingerprint";
 import { ExamPrecheck } from "./exam-take/exam-precheck";
 import { ExamSession } from "./exam-take/exam-session";
+import { useElectronIpcExamSession } from "@/hooks/use-electron-ipc-exam-session";
 import { useElectronExamStrictWindow } from "@/hooks/use-electron-exam-strict-window";
 
 export default function ExamTakePage() {
@@ -24,6 +25,8 @@ export default function ExamTakePage() {
   const [examConfig, setExamConfig] = useState<ExamTrackingConfig | null>(null);
   const [mobileRelayOnly, setMobileRelayOnly] = useState(false);
 
+  /** Electron: IPC gates for privileged handlers; must register before strict window (cleanup order). */
+  useElectronIpcExamSession();
   /** Electron: strict window only on this route (precheck + exam); cleanup restores normal maximized window. */
   useElectronExamStrictWindow();
 

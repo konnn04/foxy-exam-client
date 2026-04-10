@@ -1,9 +1,23 @@
-import { app, BrowserWindow, ipcMain, screen, desktopCapturer } from "electron";
+import { app, BrowserWindow, ipcMain, screen, desktopCapturer, globalShortcut } from "electron";
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+
+import { bannedAppNamesKillable, findRunningBannedAppsFromPs } from "./banned-process-match";
+import { killBannedTokenCrossPlatform } from "./safe-banned-kill";
+import { captureMainException } from "./sentry-main-capture";
+import { PeripheralMonitor } from "./peripheral-monitor";
+import { assertExamIpcSession, isExamIpcSessionActive, setExamIpcSessionActive } from "./ipc-exam-session";
+import {
+  parseBannedAppNames,
+  parseWhitelistAppNames,
+  parseLogSystemMetricsPayload,
+  parseOptionalDisplayId,
+  parseSaveExamLogPayload,
+} from "./ipc-payload";
+import { z } from "zod";
 
 const execAsync = promisify(exec);
 
@@ -14,6 +28,8 @@ let _lastNetworkSnapshot: { ip: string; mac: string }[] = [];
 let _lastDisplayId: number | null = null;
 let _networkPollTimer: ReturnType<typeof setInterval> | null = null;
 let _displayChangeHandler: (() => void) | null = null;
+
+const _peripheralMonitor = new PeripheralMonitor();
 
 const VM_KEYWORDS = [
   "kvm",
@@ -51,12 +67,22 @@ function _getNetworkSnapshot(): { ip: string; mac: string }[] {
 }
 
 export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
+  ipcMain.handle("set-exam-ipc-session", (_, active: unknown) => {
+    const r = z.boolean().safeParse(active);
+    if (!r.success) {
+      return { ok: false as const };
+    }
+    setExamIpcSessionActive(r.data);
+    return { ok: true as const };
+  });
+
   ipcMain.handle("get-screen-count", () => {
     return screen.getAllDisplays().length;
   });
 
   // ─── NEW: Full process list ────────────────────────────────
   ipcMain.handle("get-process-list", async () => {
+    assertExamIpcSession("get-process-list");
     try {
       let command = "";
       if (process.platform === "win32") {
@@ -83,14 +109,16 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
           mem: parseFloat(parts[3]) || 0,
         };
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Error getting process list:", e);
+      captureMainException(e, { tags: { ipc_channel: "get-process-list" } });
       return [];
     }
   });
 
   // ─── NEW: System metrics (CPU, RAM) ────────────────────────
   ipcMain.handle("get-system-metrics", () => {
+    assertExamIpcSession("get-system-metrics");
     const cpus = os.cpus();
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
@@ -126,6 +154,7 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
 
   // ─── NEW: Current display ID ───────────────────────────────
   ipcMain.handle("get-display-id", () => {
+    assertExamIpcSession("get-display-id");
     const mainWindow = getMainWindow();
     if (!mainWindow) return null;
     const bounds = mainWindow.getBounds();
@@ -135,13 +164,14 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
 
   // ─── NEW: Screen Source ID for WebRTC Target ────────────────
   ipcMain.handle("get-screen-source-id", async (_event, preferredDisplayId?: number) => {
+    assertExamIpcSession("get-screen-source-id");
+    const targetFromPayload = parseOptionalDisplayId(preferredDisplayId);
     const mainWindow = getMainWindow();
     if (!mainWindow) return null;
     const bounds = mainWindow.getBounds();
     const display = screen.getDisplayMatching(bounds);
-    const targetDisplayId = Number.isFinite(preferredDisplayId as number)
-      ? Number(preferredDisplayId)
-      : display.id;
+    const targetDisplayId =
+      typeof targetFromPayload === "number" ? targetFromPayload : display.id;
 
     try {
       const sources = await desktopCapturer.getSources({ types: ["screen"] });
@@ -163,15 +193,26 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
       }
 
       return sources[0]?.id || null;
-    } catch (e) {
+    } catch (e: unknown) {
       console.error("Failed to get desktop capturer sources", e);
+      captureMainException(e, { tags: { ipc_channel: "get-screen-source-id" } });
       return null;
     }
   });
 
-  // ─── NEW: Start monitoring display & network changes ──────
+  // ─── NEW: Start monitoring display & network changes & peripherals ──────
   ipcMain.handle("start-hw-monitoring", () => {
+    assertExamIpcSession("start-hw-monitoring");
     const mainWindow = getMainWindow();
+
+    // Monitor Peripherals (USB, Capture Card, Mouse, Keyboard)
+    _peripheralMonitor.onChange = (action, device) => {
+      const mainWin = getMainWindow();
+      if (mainWin && !mainWin.isDestroyed()) {
+        mainWin.webContents.send("peripheral-changed", { action, device });
+      }
+    };
+    _peripheralMonitor.start(5000); // Poll every 5s
 
     // Monitor display changes
     if (!_displayChangeHandler) {
@@ -222,6 +263,8 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
 
   // ─── NEW: Stop monitoring ──────────────────────────────────
   ipcMain.handle("stop-hw-monitoring", () => {
+    // No exam session gate: renderer cleanup often runs after IPC session flag is cleared (unmount order).
+    _peripheralMonitor.stop();
     if (_displayChangeHandler) {
       screen.removeListener("display-added", _displayChangeHandler);
       screen.removeListener("display-removed", _displayChangeHandler);
@@ -234,10 +277,36 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
     return true;
   });
 
+  // ─── NEW: Retrieve Peripheral Snapshot snapshot ──────
+  ipcMain.handle("get-peripheral-snapshot", async () => {
+    assertExamIpcSession("get-peripheral-snapshot");
+    return await _peripheralMonitor.getSnapshot();
+  });
+
   ipcMain.on("set-always-on-top", (_, isTop: boolean) => {
     const mainWindow = getMainWindow();
     if (mainWindow) {
       mainWindow.setAlwaysOnTop(isTop, "screen-saver");
+    }
+  });
+
+  ipcMain.on("set-content-protection", (_, isSecure: boolean) => {
+    const mainWindow = getMainWindow();
+    if (mainWindow) {
+      mainWindow.setContentProtection(isSecure);
+    }
+    
+    // Toggle system-wide shortcut blocking for screenshots
+    if (isSecure) {
+      globalShortcut.register('PrintScreen', () => { /* no-op */ });
+      globalShortcut.register('CommandOrControl+Shift+S', () => { /* no-op */ });
+      globalShortcut.register('CommandOrControl+Shift+4', () => { /* no-op */ });
+      globalShortcut.register('CommandOrControl+Shift+3', () => { /* no-op */ });
+    } else {
+      globalShortcut.unregister('PrintScreen');
+      globalShortcut.unregister('CommandOrControl+Shift+S');
+      globalShortcut.unregister('CommandOrControl+Shift+4');
+      globalShortcut.unregister('CommandOrControl+Shift+3');
     }
   });
 
@@ -246,6 +315,22 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
     if (mainWindow) {
       mainWindow.setFullScreen(isFull);
     }
+  });
+
+  ipcMain.handle("get-window-lock-state", () => {
+    assertExamIpcSession("get-window-lock-state");
+    const mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { isFullScreen: false, isAlwaysOnTop: false };
+    }
+    return {
+      isFullScreen: mainWindow.isFullScreen(),
+      isAlwaysOnTop: mainWindow.isAlwaysOnTop(),
+    };
+  });
+
+  ipcMain.on("quit-app", () => {
+    app.quit();
   });
 
   /** Awaitable: leave exam lockdown — always-on-top off, native fullscreen off, then normal maximized desktop window. */
@@ -260,10 +345,6 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
       mainWindow.maximize();
     }
     mainWindow.focus();
-  });
-
-  ipcMain.on("quit-app", () => {
-    app.quit();
   });
 
   ipcMain.handle("get-network-info", () => {
@@ -352,9 +433,11 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
           // ignore
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("VM detection failed", error);
-      return { isVirtualMachine: false, confidence: 0, reasons: [], details: {}, error: String(error?.message || error) };
+      captureMainException(error, { tags: { ipc_channel: "get-vm-detection" } });
+      const msg = error instanceof Error ? error.message : String(error);
+      return { isVirtualMachine: false, confidence: 0, reasons: [], details: {}, error: msg };
     }
 
     const uniqueReasons = Array.from(new Set(reasons));
@@ -367,7 +450,25 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
     };
   });
 
-  ipcMain.handle("get-running-banned-apps", async (_, bannedApps?: string[]) => {
+  ipcMain.handle("get-running-banned-apps", async (_, bannedApps?: string[], whitelistApps?: string[]) => {
+    assertExamIpcSession("get-running-banned-apps");
+    let appsToCheck: string[];
+    try {
+      appsToCheck = parseBannedAppNames(bannedApps);
+    } catch (e: unknown) {
+      console.error("get-running-banned-apps: invalid bannedApps payload", e);
+      captureMainException(e instanceof Error ? e : new Error(String(e)), {
+        tags: { ipc_channel: "get-running-banned-apps" },
+        extra: { phase: "parse_banned" },
+      });
+      return [];
+    }
+    let whitelist: string[] = [];
+    try {
+      whitelist = parseWhitelistAppNames(whitelistApps);
+    } catch {
+      whitelist = [];
+    }
     try {
       let command = "";
       if (process.platform === "win32") {
@@ -379,56 +480,62 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
       }
 
       const { stdout } = await execAsync(command);
-      const runningProcesses = stdout.toLowerCase();
 
-      const appsToCheck = Array.isArray(bannedApps) ? bannedApps : [];
       if (appsToCheck.length === 0) {
         return [];
       }
 
-      return appsToCheck.filter((appName) => {
-        return runningProcesses.includes(appName.toLowerCase());
-      });
-    } catch (e: any) {
+      return findRunningBannedAppsFromPs(stdout, process.platform, appsToCheck, whitelist);
+    } catch (e: unknown) {
       console.error("Loi lay danh sach process:", e);
-      return [`[LOI HE THONG]: ${e.message || "Unknown Execute Error"}`];
+      captureMainException(e, { tags: { ipc_channel: "get-running-banned-apps" } });
+      const msg = e instanceof Error ? e.message : "Unknown Execute Error";
+      return [`[LOI HE THONG]: ${msg}`];
     }
   });
 
   ipcMain.handle("kill-banned-apps", async (_, appNames: string[]) => {
+    assertExamIpcSession("kill-banned-apps");
+    let names: string[];
+    try {
+      names = parseBannedAppNames(appNames);
+    } catch {
+      return { killed: [] as string[], failed: [] as string[] };
+    }
     const killed: string[] = [];
     const failed: string[] = [];
+    const killTargets = bannedAppNamesKillable(names);
 
-    for (const appName of appNames) {
+    for (const appName of killTargets) {
       try {
-        let command = "";
-        if (process.platform === "win32") {
-          command = `taskkill /IM "${appName}" /F`;
-        } else {
-          command = `pkill -f "${appName}" 2>/dev/null || true`;
-        }
-
-        await execAsync(command);
+        await killBannedTokenCrossPlatform(appName, process.platform);
         killed.push(appName);
-      } catch (e: any) {
-        if (e.code === 1) {
-          killed.push(appName);
-        } else {
-          failed.push(appName);
-          console.error(`Failed to kill ${appName}:`, e);
-        }
+      } catch (e: unknown) {
+        failed.push(appName);
+        console.error(`Failed to kill ${appName}:`, e);
+        captureMainException(e, {
+          tags: { ipc_channel: "kill-banned-apps" },
+          extra: { app_name: appName },
+        });
       }
     }
 
     return { killed, failed };
   });
 
-  ipcMain.handle("log-system-metrics", async (_, payload: { examId: string; fps: number }) => {
+  ipcMain.handle("log-system-metrics", async (_, payload: unknown) => {
+    assertExamIpcSession("log-system-metrics");
+    let parsed: { examId: string; fps: number };
+    try {
+      parsed = parseLogSystemMetricsPayload(payload);
+    } catch {
+      return false;
+    }
     try {
       const logDir = path.join(app.getPath("desktop"), "exam_logs");
       await fs.mkdir(logDir, { recursive: true });
 
-      const metricsPath = path.join(logDir, `exam_${payload.examId}_METRICS.csv`);
+      const metricsPath = path.join(logDir, `exam_${parsed.examId}_METRICS.csv`);
 
       try {
         await fs.access(metricsPath);
@@ -448,55 +555,91 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
         const cpu = m.cpu.percentCPUUsage.toFixed(2);
         const mem = m.memory.workingSetSize;
         const peakMem = m.memory.peakWorkingSetSize;
-        csvData += `${timeStr},${payload.fps},${m.type},${cpu},${mem},${peakMem}\n`;
+        csvData += `${timeStr},${parsed.fps},${m.type},${cpu},${mem},${peakMem}\n`;
       }
 
       await fs.appendFile(metricsPath, csvData, "utf8");
       return true;
-    } catch (e) {
+    } catch (e: unknown) {
       console.error("Loi ghi system metrics:", e);
+      captureMainException(e, { tags: { ipc_channel: "log-system-metrics" } });
       return false;
     }
   });
 
-  ipcMain.handle(
-    "save-exam-log",
-    async (_, payload: { examId: string; violations: any[]; tracking: any[] }) => {
-      try {
-        const logDir = path.join(app.getPath("desktop"), "exam_logs");
-        await fs.mkdir(logDir, { recursive: true });
-
-        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const violationPath = path.join(
-          logDir,
-          `exam_${payload.examId}_VIOLATION_${timestamp}.txt`
-        );
-        const trackingPath = path.join(
-          logDir,
-          `exam_${payload.examId}_TRACKING_${timestamp}.txt`
-        );
-
-        const violationContent = payload.violations
-          .map((v) => `[${new Date(v.timestamp).toISOString()}] [${v.type}] ${v.message}`)
-          .join("\n");
-        await fs.writeFile(violationPath, violationContent || "No violations recorded.", "utf8");
-
-        const trackingContent = payload.tracking
-          .map((l) => `[${l.time}] [${l.type}] ${l.data}`)
-          .join("\n");
-        await fs.writeFile(trackingPath, trackingContent || "No tracking recorded.", "utf8");
-
-        console.log("\n======================================================");
-        console.log("[+] Da xuat file ghi log thanh cong:");
-        console.log(` -> Vi pham: ${violationPath}`);
-        console.log(` -> Tracking: ${trackingPath}`);
-        console.log("======================================================\n");
-
-        return { success: true, violationPath, trackingPath };
-      } catch (e) {
-        console.error("Loi luu log:", e);
-        return { success: false, error: e };
-      }
+  ipcMain.handle("save-exam-log", async (_, payload: unknown) => {
+    assertExamIpcSession("save-exam-log");
+    let parsed;
+    try {
+      parsed = parseSaveExamLogPayload(payload);
+    } catch (e) {
+      return { success: false as const, error: String(e) };
     }
-  );
+    try {
+      const logDir = path.join(app.getPath("desktop"), "exam_logs");
+      await fs.mkdir(logDir, { recursive: true });
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const violationPath = path.join(
+        logDir,
+        `exam_${parsed.examId}_VIOLATION_${timestamp}.txt`
+      );
+      const trackingPath = path.join(
+        logDir,
+        `exam_${parsed.examId}_TRACKING_${timestamp}.txt`
+      );
+
+      const violationContent = parsed.violations
+        .map((v) => {
+          const ts = v["timestamp"];
+          const lineTs =
+            typeof ts === "number" || typeof ts === "string"
+              ? new Date(ts).toISOString()
+              : "?";
+          const type = typeof v["type"] === "string" ? v["type"] : "?";
+          const message =
+            typeof v["message"] === "string" ? v["message"] : JSON.stringify(v);
+          return `[${lineTs}] [${type}] ${message}`;
+        })
+        .join("\n");
+      await fs.writeFile(violationPath, violationContent || "No violations recorded.", "utf8");
+
+      const trackingContent = parsed.tracking
+        .map((l) => {
+          const time =
+            typeof l["time"] === "string" ? l["time"] : String(l["time"] ?? "");
+          const type = typeof l["type"] === "string" ? l["type"] : "?";
+          const data =
+            typeof l["data"] === "string" ? l["data"] : JSON.stringify(l);
+          return `[${time}] [${type}] ${data}`;
+        })
+        .join("\n");
+      await fs.writeFile(trackingPath, trackingContent || "No tracking recorded.", "utf8");
+
+      console.log("\n======================================================");
+      console.log("[+] Da xuat file ghi log thanh cong:");
+      console.log(` -> Vi pham: ${violationPath}`);
+      console.log(` -> Tracking: ${trackingPath}`);
+      console.log("======================================================\n");
+
+      return { success: true as const, violationPath, trackingPath };
+    } catch (e: unknown) {
+      console.error("Loi luu log:", e);
+      captureMainException(e, { tags: { ipc_channel: "save-exam-log" } });
+      return { success: false as const, error: e };
+    }
+  });
+
+  ipcMain.on("start-global-hook", () => {
+    if (!isExamIpcSessionActive()) {
+      console.warn("[IPC] start-global-hook ignored (no exam take session)");
+      return;
+    }
+  });
+
+  ipcMain.on("stop-global-hook", () => {
+    if (!isExamIpcSessionActive()) {
+      return;
+    }
+  });
 };
