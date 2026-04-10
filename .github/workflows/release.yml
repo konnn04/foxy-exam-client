@@ -10,12 +10,6 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      include_macos:
-        description: "Include macOS build"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -86,6 +80,22 @@ jobs:
           git push origin "$TAG"
           echo "bumped=true" >> "$GITHUB_OUTPUT"
 
+      # Draft exists immediately so you can review on GitHub even if a matrix leg fails later.
+      - name: Create or refresh draft GitHub Release
+        if: steps.publish.outputs.bumped == 'true'
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="v${VERSION}"
+          NOTES="Draft: desktop builds attach as matrix jobs finish. Publish the release when you approve."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --draft --notes "$NOTES" || true
+          else
+            gh release create "$TAG" --draft --title "$TAG" --notes "$NOTES"
+          fi
+
   # Same workflow run as bump — required because pushes with GITHUB_TOKEN do not start new runs.
   electron-after-bump:
     name: Electron (post-bump)
@@ -102,47 +112,3 @@ jobs:
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     uses: ./.github/workflows/electron-publish-matrix.yml
     secrets: inherit
-
-  release_macos:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.include_macos == true }}
-    name: Release (macos-latest)
-    runs-on: macos-latest
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install Dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Create .env from secret
-        shell: bash
-        env:
-          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE }}
-        run: |
-          if [ -z "$ENV_FILE_CONTENT" ]; then
-            echo "Missing secret ENV_FILE. Add it in Settings > Secrets and variables > Actions."
-            exit 1
-          fi
-          printf "%s" "$ENV_FILE_CONTENT" > .env
-
-      - name: Build Web and Electron Assets
-        run: pnpm run build
-
-      - name: Build and Publish Electron App
-        run: pnpm exec electron-builder --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: false

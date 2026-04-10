@@ -1,4 +1,4 @@
-# Called from release.yml — avoids duplicating Linux/Windows publish steps.
+# Called from release.yml — Linux / Windows / macOS matrix (uiohook-napi needs X11 headers on Linux).
 on:
   workflow_call:
 
@@ -7,7 +7,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     name: Publish (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     permissions:
@@ -16,6 +16,12 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Install Linux native build deps (uiohook-napi / libuiohook X11)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxtst-dev libxi-dev
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
