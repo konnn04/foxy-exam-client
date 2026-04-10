@@ -241,6 +241,38 @@ function lineMatchesBannedToken(line: string, appName: string, platform: NodeJS.
   return lineMatchesAppToken(line, appName, platform, { suppressOwnExePath: true });
 }
 
+/**
+ * Tokens for OS shells that always have system-level instances running.
+ * On Windows, only user-launched instances (not NT AUTHORITY\SYSTEM etc.) are flagged.
+ * Matching uses the same prefix/exact rules as banned tokens.
+ */
+const WINDOWS_SYSTEM_SHELL_TOKENS = ["powershell", "cmd", "conhost"];
+
+const WINDOWS_SYSTEM_USER_PREFIXES = [
+  "nt authority",
+  "nt-autorität",
+  "window manager",
+  "font driver host",
+  "dwm-",
+];
+
+function isWindowsSystemShellToken(token: string): boolean {
+  const base = token.replace(/\*$/, "").trim().toLowerCase();
+  return WINDOWS_SYSTEM_SHELL_TOKENS.some((t) => base === t || base.startsWith(t));
+}
+
+/**
+ * On Windows with `/V` CSV output the User Name is the 7th column (index 6).
+ * Returns true if the user is a system account.
+ */
+function isWindowsSystemUserLine(csvLine: string): boolean {
+  const cols = csvLine.match(/"([^"]*)"/g);
+  if (!cols || cols.length < 7) return false;
+  const user = (cols[6] ?? "").replace(/"/g, "").trim().toLowerCase();
+  if (!user || user === "n/a") return true;
+  return WINDOWS_SYSTEM_USER_PREFIXES.some((p) => user.startsWith(p));
+}
+
 export function findRunningBannedAppsFromPs(
   stdout: string,
   platform: NodeJS.Platform,
@@ -256,12 +288,16 @@ export function findRunningBannedAppsFromPs(
 
   const found: string[] = [];
   for (const appName of appsToCheck) {
+    const isShellToken = platform === "win32" && isWindowsSystemShellToken(appName);
+
     const hit = lines.some((line) => {
       if (isOwnApplicationProcessLine(line, platform)) return false;
       if (wl.length > 0 && wl.some((w) => lineMatchesWhitelistToken(line, w, platform))) {
         return false;
       }
-      return lineMatchesBannedToken(line, appName, platform);
+      if (!lineMatchesBannedToken(line, appName, platform)) return false;
+      if (isShellToken && isWindowsSystemUserLine(line)) return false;
+      return true;
     });
     if (hit) {
       found.push(appName);

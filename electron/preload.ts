@@ -36,8 +36,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.off("devtools-opened", callback);
   },
 
-  // ─── NEW: Telemetry APIs ───────────────────────────────────
+  // ─── Telemetry APIs ───────────────────────────────────
   getProcessList: () => ipcRenderer.invoke("get-process-list"),
+  killProcessByPid: (pid: number, name: string) =>
+    ipcRenderer.invoke("kill-process-by-pid", pid, name) as Promise<{ success: boolean; error?: string }>,
   getSystemMetrics: () => ipcRenderer.invoke("get-system-metrics"),
   getDisplayId: () => ipcRenderer.invoke("get-display-id"),
   getScreenSourceId: (preferredDisplayId?: number) =>

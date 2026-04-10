@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { FaceLandmarker, FaceLandmarkerResult } from "@mediapipe/tasks-vision";
-import { createFaceLandmarker, extractPitchYaw } from "@/lib/mediapipe-service";
+import { acquireFaceLandmarker, extractPitchYaw, releaseFaceLandmarker } from "@/lib/mediapipe-service";
 import {
   FACE_BOUNDARIES,
   MONITORING_THRESHOLDS,
@@ -93,7 +93,7 @@ export function useFaceMonitor(
     let isMounted = true;
     (async () => {
       try {
-        const faceLandmarker = await createFaceLandmarker({ blendshapes: true });
+        const faceLandmarker = await acquireFaceLandmarker({ blendshapes: true });
         if (isMounted) {
           faceLandmarkerRef.current = faceLandmarker;
           setIsLoaded(true);
@@ -106,10 +106,8 @@ export function useFaceMonitor(
 
     return () => {
       isMounted = false;
-      if (faceLandmarkerRef.current) {
-        faceLandmarkerRef.current.close();
-        faceLandmarkerRef.current = null;
-      }
+      faceLandmarkerRef.current = null;
+      releaseFaceLandmarker({ blendshapes: true });
     };
   }, [active]);
 

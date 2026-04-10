@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { User, CheckCircle, Loader2, RefreshCcw, ArrowLeft, ArrowRight } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { DEVELOPMENT_MODE } from "@/config";
-import { createFaceLandmarker, extractPitchYaw } from "@/lib/mediapipe-service";
+import { acquireFaceLandmarker, extractPitchYaw, releaseFaceLandmarker } from "@/lib/mediapipe-service";
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -80,7 +80,8 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
     async function init() {
       try {
         if (!faceLandmarkerRef.current) {
-          faceLandmarkerRef.current = await createFaceLandmarker();
+          // Use blendshapes=true to share the same warmed instance with orientation + in-exam monitor.
+          faceLandmarkerRef.current = await acquireFaceLandmarker({ blendshapes: true });
         }
         if (!isSubscribed) return;
         setPhase('init');
@@ -113,10 +114,8 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
     return () => {
       isSubscribed = false;
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
-      if (faceLandmarkerRef.current) {
-        faceLandmarkerRef.current.close();
-        faceLandmarkerRef.current = null;
-      }
+      faceLandmarkerRef.current = null;
+      releaseFaceLandmarker({ blendshapes: true });
     };
   }, [stream]);
 

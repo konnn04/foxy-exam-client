@@ -10,6 +10,7 @@ import {
   Track,
   ConnectionState,
   type LocalTrackPublication,
+  type RemoteParticipant,
 } from "livekit-client";
 import api from "./api";
 
@@ -143,6 +144,7 @@ class LiveKitPublisher {
 
       await this.room.connect(ws_url, token);
       console.log("[LiveKitPublisher] Connected to LiveKit room");
+      this.startProctorCommandListener();
 
       if (
         requireSupervisorAgent &&
@@ -373,6 +375,109 @@ class LiveKitPublisher {
     });
   }
 
+  private proctorCommandListenerActive = false;
+
+  /**
+   * Start listening for proctor commands via LiveKit data channel.
+   * Handles: request_process_list, kill_process
+   */
+  startProctorCommandListener(): void {
+    if (this.proctorCommandListenerActive || !this.room) return;
+    this.proctorCommandListenerActive = true;
+
+    const handler = async (
+      payload: Uint8Array,
+      participant?: RemoteParticipant,
+      _kind?: unknown,
+      topic?: string,
+    ) => {
+      if (topic !== "proctor_command") return;
+      if (!participant?.metadata) return;
+
+      let meta: Record<string, unknown> = {};
+      try { meta = JSON.parse(participant.metadata); } catch { return; }
+      if (meta.role !== "proctor") return;
+
+      let msg: { type: string; [k: string]: unknown };
+      try { msg = JSON.parse(new TextDecoder().decode(payload)); } catch { return; }
+
+      console.log("[LiveKitPublisher] Proctor command:", msg.type);
+
+      if (msg.type === "request_process_list") {
+        await this.handleProcessListRequest(participant.identity);
+      } else if (msg.type === "kill_process") {
+        await this.handleKillProcess(
+          participant.identity,
+          msg.pid as number,
+          msg.name as string,
+        );
+      }
+    };
+
+    this.room.on(RoomEvent.DataReceived, handler);
+    console.log("[LiveKitPublisher] Proctor command listener started");
+  }
+
+  private async handleProcessListRequest(proctorIdentity: string): Promise<void> {
+    try {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.getProcessList) return;
+
+      const processes = await electronAPI.getProcessList();
+      const data = new TextEncoder().encode(
+        JSON.stringify({ type: "process_list_response", processes }),
+      );
+      await this.room?.localParticipant.publishData(data, {
+        reliable: true,
+        topic: "proctor_response",
+        destinationIdentities: [proctorIdentity],
+      });
+    } catch (err) {
+      console.error("[LiveKitPublisher] handleProcessListRequest error:", err);
+    }
+  }
+
+  private async handleKillProcess(
+    proctorIdentity: string,
+    pid: number,
+    name: string,
+  ): Promise<void> {
+    try {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.killProcessByPid) {
+        await this.sendProctorResponse(proctorIdentity, {
+          type: "kill_process_result",
+          pid, name, success: false, error: "API not available",
+        });
+        return;
+      }
+
+      const result = await electronAPI.killProcessByPid(pid, name);
+      await this.sendProctorResponse(proctorIdentity, {
+        type: "kill_process_result",
+        pid, name, ...result,
+      });
+    } catch (err) {
+      console.error("[LiveKitPublisher] handleKillProcess error:", err);
+      await this.sendProctorResponse(proctorIdentity, {
+        type: "kill_process_result",
+        pid, name, success: false, error: "Client error",
+      });
+    }
+  }
+
+  private async sendProctorResponse(
+    proctorIdentity: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const data = new TextEncoder().encode(JSON.stringify(payload));
+    await this.room?.localParticipant.publishData(data, {
+      reliable: true,
+      topic: "proctor_response",
+      destinationIdentities: [proctorIdentity],
+    });
+  }
+
   /**
    * Disconnect from the room and unpublish all tracks.
    */
@@ -386,6 +491,7 @@ class LiveKitPublisher {
       this.room = null;
     }
     this.examId = 0;
+    this.proctorCommandListenerActive = false;
     this.roomPresenceOk = null;
     console.log("[LiveKitPublisher] Disconnected");
   }
