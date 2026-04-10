@@ -1,20 +1,7 @@
 import { app } from "electron";
 import path from "path";
 import { fileURLToPath } from "url";
-
-const toBoolean = (value: unknown): boolean => String(value).toLowerCase() === "true";
-
-const resolveProductionFlag = ({
-  isPackaged,
-  nodeEnv,
-  viteProduction,
-}: {
-  isPackaged?: boolean;
-  nodeEnv?: string;
-  viteProduction?: string;
-}): boolean => {
-  return Boolean(isPackaged) || nodeEnv === "production" || toBoolean(viteProduction);
-};
+import { resolveProductionFlag } from "../src/config/runtime-shared";
 
 const filename = fileURLToPath(import.meta.url);
 const dirname = path.dirname(filename);
@@ -43,7 +30,7 @@ export const ELECTRON_RUNTIME = {
   devServerUrl: process.env.VITE_DEV_SERVER_URL ?? viteDevServerUrl,
   isProduction: resolveProductionFlag({
     isPackaged: app.isPackaged,
-    nodeEnv: process.env.NODE_ENV ?? viteMode,
+    nodeEnv: viteMode ?? process.env.NODE_ENV,
     viteProduction: process.env.VITE_PRODUCTION ?? viteProduction,
   }),
 };
