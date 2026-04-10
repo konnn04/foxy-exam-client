@@ -11,6 +11,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "lint": "tsc --noEmit",
     "build": "tsc && vite build",
     "build:electron": "tsc && vite build && electron-builder",
     "release:local": "pnpm run build && electron-builder --publish never",
