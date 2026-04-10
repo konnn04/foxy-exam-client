@@ -12,6 +12,7 @@ import { ShieldAlert } from "lucide-react";
 import { DEVELOPMENT_MODE } from "@/config/security.config";
 import type { ExamTrackingConfig, ExamData } from "@/types/exam";
 import { useToastCustom } from "@/hooks/use-toast-custom";
+import { preloadFaceLandmarker } from "@/lib/mediapipe-service";
 
 export interface ExamPrecheckProps {
   examId: string;
@@ -184,6 +185,20 @@ export function ExamPrecheck({
       onComplete(null, null, config, proctorConfig, { mobileRelayOnly: false });
     }
   }, [config, proctorConfig, onComplete]);
+
+  // Warm up MediaPipe as soon as proctoring config is known,
+  // so FaceAuth/Orientation and exam start don't re-pay full init cost.
+  useEffect(() => {
+    if (!config) return;
+    const needsCamera =
+      config.level === "strict" ||
+      config.requireCamera ||
+      config.requireFaceAuth ||
+      config.monitorGaze ||
+      config.detectBannedObjects;
+    if (!needsCamera) return;
+    void preloadFaceLandmarker({ blendshapes: true });
+  }, [config]);
 
   const handleCameraConfirm = (stream: MediaStream) => {
     setMobileRelayOnly(false);

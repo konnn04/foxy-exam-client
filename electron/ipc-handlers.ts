@@ -17,9 +17,11 @@ import {
   parseOptionalDisplayId,
   parseSaveExamLogPayload,
 } from "./ipc-payload";
+import { getPlatformOps } from "./platform";
 import { z } from "zod";
 
 const execAsync = promisify(exec);
+const platformOps = getPlatformOps();
 
 type GetMainWindow = () => BrowserWindow | null;
 
@@ -30,26 +32,6 @@ let _networkPollTimer: ReturnType<typeof setInterval> | null = null;
 let _displayChangeHandler: (() => void) | null = null;
 
 const _peripheralMonitor = new PeripheralMonitor();
-
-const VM_KEYWORDS = [
-  "kvm",
-  "qemu",
-  "vmware",
-  "virtualbox",
-  "vbox",
-  "xen",
-  "hyper-v",
-  "hyperv",
-  "parallels",
-  "bochs",
-  "bhyve",
-  "virtual machine",
-];
-
-function _containsVmKeyword(input: string): boolean {
-  const lower = input.toLowerCase();
-  return VM_KEYWORDS.some((k) => lower.includes(k));
-}
 
 function _getNetworkSnapshot(): { ip: string; mac: string }[] {
   const interfaces = os.networkInterfaces();
@@ -80,35 +62,13 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
     return screen.getAllDisplays().length;
   });
 
-  // ─── NEW: Full process list ────────────────────────────────
+  // ─── Full process list (with user ownership) ──────────────
   ipcMain.handle("get-process-list", async () => {
     assertExamIpcSession("get-process-list");
     try {
-      let command = "";
-      if (process.platform === "win32") {
-        command = 'tasklist /FO CSV /NH';
-      } else if (process.platform === "darwin") {
-        command = "ps -axco pid,command,%cpu,%mem | awk 'NR>1'";
-      } else {
-        command = "ps -axo pid,comm,%cpu,%mem --no-headers";
-      }
-      const { stdout } = await execAsync(command, { maxBuffer: 1024 * 1024 });
-
-      if (process.platform === "win32") {
-        return stdout.split("\n").filter(Boolean).map((line) => {
-          const parts = line.replace(/"/g, "").split(",");
-          return { name: parts[0]?.trim() || "", pid: parseInt(parts[1]) || 0 };
-        });
-      }
-      return stdout.split("\n").filter(Boolean).map((line) => {
-        const parts = line.trim().split(/\s+/);
-        return {
-          pid: parseInt(parts[0]) || 0,
-          name: parts[1] || "",
-          cpu: parseFloat(parts[2]) || 0,
-          mem: parseFloat(parts[3]) || 0,
-        };
-      });
+      const command = platformOps.getProcessListCommand();
+      const { stdout } = await execAsync(command, { maxBuffer: 2 * 1024 * 1024 });
+      return platformOps.parseProcessList(stdout);
     } catch (e: unknown) {
       console.error("Error getting process list:", e);
       captureMainException(e, { tags: { ipc_channel: "get-process-list" } });
@@ -373,81 +333,14 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
   });
 
   ipcMain.handle("get-vm-detection", async () => {
-    const reasons: string[] = [];
-    const details: Record<string, string> = {};
-
     try {
-      if (process.platform === "linux") {
-        try {
-          const { stdout } = await execAsync("systemd-detect-virt || true");
-          const virt = stdout.trim();
-          if (virt && virt !== "none") {
-            reasons.push(`systemd-detect-virt=${virt}`);
-            details.systemdDetectVirt = virt;
-          }
-        } catch {
-          // ignore
-        }
-
-        const dmiFiles = [
-          "/sys/class/dmi/id/product_name",
-          "/sys/class/dmi/id/sys_vendor",
-          "/sys/class/dmi/id/board_vendor",
-          "/sys/class/dmi/id/bios_vendor",
-        ];
-        for (const f of dmiFiles) {
-          try {
-            const v = (await fs.readFile(f, "utf8")).trim();
-            if (v) {
-              details[f] = v;
-              if (_containsVmKeyword(v)) {
-                reasons.push(`${path.basename(f)}=${v}`);
-              }
-            }
-          } catch {
-            // ignore unavailable files
-          }
-        }
-      } else if (process.platform === "win32") {
-        try {
-          const { stdout } = await execAsync(
-            "powershell -NoProfile -Command \"(Get-CimInstance Win32_ComputerSystem).Model; (Get-CimInstance Win32_ComputerSystem).Manufacturer; (Get-CimInstance Win32_BIOS).SMBIOSBIOSVersion\""
-          );
-          const info = stdout.trim();
-          details.windowsHardware = info;
-          if (_containsVmKeyword(info)) {
-            reasons.push("windows_hardware_signature");
-          }
-        } catch {
-          // ignore
-        }
-      } else if (process.platform === "darwin") {
-        try {
-          const { stdout } = await execAsync("sysctl -n machdep.cpu.features || true");
-          const features = stdout.trim();
-          details.cpuFeatures = features;
-          if (features.toLowerCase().includes("vmm")) {
-            reasons.push("cpu_feature_vmm");
-          }
-        } catch {
-          // ignore
-        }
-      }
+      return await platformOps.detectVirtualMachine();
     } catch (error: unknown) {
       console.error("VM detection failed", error);
       captureMainException(error, { tags: { ipc_channel: "get-vm-detection" } });
       const msg = error instanceof Error ? error.message : String(error);
       return { isVirtualMachine: false, confidence: 0, reasons: [], details: {}, error: msg };
     }
-
-    const uniqueReasons = Array.from(new Set(reasons));
-    const confidence = Math.min(1, uniqueReasons.length / 2);
-    return {
-      isVirtualMachine: uniqueReasons.length > 0,
-      confidence,
-      reasons: uniqueReasons,
-      details,
-    };
   });
 
   ipcMain.handle("get-running-banned-apps", async (_, bannedApps?: string[], whitelistApps?: string[]) => {
@@ -470,16 +363,8 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
       whitelist = [];
     }
     try {
-      let command = "";
-      if (process.platform === "win32") {
-        command = "tasklist /FO CSV /NH";
-      } else if (process.platform === "darwin") {
-        command = "ps -axco command | awk 'NR>1'";
-      } else {
-        command = "ps -axo args | awk 'NR>1'";
-      }
-
-      const { stdout } = await execAsync(command);
+      const command = platformOps.getBannedAppsCommand();
+      const { stdout } = await execAsync(command, { maxBuffer: 2 * 1024 * 1024 });
 
       if (appsToCheck.length === 0) {
         return [];
@@ -521,6 +406,24 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
     }
 
     return { killed, failed };
+  });
+
+  ipcMain.handle("kill-process-by-pid", async (_, pid: number, name: string) => {
+    assertExamIpcSession("kill-process-by-pid");
+    try {
+      const result = await platformOps.killProcessByPid(pid, name);
+      if (!result.success) {
+        captureMainException(new Error(result.error || "Kill failed"), {
+          tags: { ipc_channel: "kill-process-by-pid" },
+          extra: { pid, name },
+        });
+      }
+      return result;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Kill failed";
+      captureMainException(e, { tags: { ipc_channel: "kill-process-by-pid" }, extra: { pid, name } });
+      return { success: false, error: msg };
+    }
   });
 
   ipcMain.handle("log-system-metrics", async (_, payload: unknown) => {

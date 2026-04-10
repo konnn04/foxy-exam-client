@@ -4,7 +4,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { FaceLandmarker, DrawingUtils } from "@mediapipe/tasks-vision";
 import { Loader2, CheckCircle, ShieldCheck, AlertCircle, Mic, AlertTriangle } from "lucide-react";
-import { createFaceLandmarker, extractPitchYaw } from "@/lib/mediapipe-service";
+import { acquireFaceLandmarker, extractPitchYaw, releaseFaceLandmarker } from "@/lib/mediapipe-service";
 import {
   TARGET_INTERVAL_MS,
   NOSE_X_MIN, NOSE_X_MAX,
@@ -57,7 +57,7 @@ export function CameraOrientationCheck({ stream, onSuccess, onCancel }: CameraOr
     let active = true;
     (async () => {
       try {
-        const faceLandmarker = await createFaceLandmarker({ blendshapes: true });
+        const faceLandmarker = await acquireFaceLandmarker({ blendshapes: true });
         if (active) {
           faceLandmarkerRef.current = faceLandmarker;
           setPhase('orientation');
@@ -72,9 +72,8 @@ export function CameraOrientationCheck({ stream, onSuccess, onCancel }: CameraOr
     })();
     return () => {
       active = false;
-      if (faceLandmarkerRef.current) {
-        faceLandmarkerRef.current.close();
-      }
+      faceLandmarkerRef.current = null;
+      releaseFaceLandmarker({ blendshapes: true });
     };
   }, []);
 

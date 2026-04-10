@@ -158,7 +158,7 @@ export function ExamTopNav({
   };
 
   return (
-    <header className="z-50 shrink-0 border-b bg-card/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-card/80">
+    <header className="z-50 shrink-0 border-b bg-card shadow-sm">
       <div className="flex flex-wrap items-center gap-3 px-3 py-2 md:px-4">
         <h1 className="min-w-0 max-w-[min(100%,14rem)] truncate text-sm font-semibold md:max-w-xs md:text-base">
           {examTitle}
@@ -605,7 +605,7 @@ export function ExamOverlay({
   return (
     <>
       {showLockOverlay && !isBlurred && (
-        <div className="absolute inset-0 z-[90] flex items-center justify-center bg-background/80 backdrop-blur-md">
+        <div className="absolute inset-0 z-[90] flex items-center justify-center bg-background/95">
           <div className="bg-card border-2 border-primary/50 rounded-2xl p-8 max-w-sm text-center space-y-4 shadow-xl">
             <div className="flex justify-center">
               <ShieldAlert className="h-12 w-12 text-primary animate-pulse" />
@@ -629,7 +629,7 @@ export function ExamOverlay({
       )}
 
       {(isBlurred || hardwareLock !== "") && (
-        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-xl">
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/95">
           <div className="bg-card border rounded-2xl p-8 max-w-md text-center space-y-4 shadow-2xl">
             <div className="flex justify-center">
               <div className="h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center">
