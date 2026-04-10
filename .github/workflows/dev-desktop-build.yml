@@ -1,6 +1,6 @@
-# Dev desktop installers + draft Release (tag dev-desktop).
-# Triggers: push to branch `dev`, or manual workflow_dispatch.
-# Secret: ENV_FILE_DEV (same shape as ENV_FILE).
+# Dev installers (Linux / Windows / macOS) + draft Release (tag dev-desktop).
+# Triggers: push to `dev`, or workflow_dispatch.
+# Secret: ENV_FILE_DEV
 
 name: Dev desktop build
 
@@ -58,7 +58,7 @@ jobs:
           ENV_FILE_DEV_CONTENT: ${{ secrets.ENV_FILE_DEV }}
         run: |
           if [ -z "$ENV_FILE_DEV_CONTENT" ]; then
-            echo "Missing secret ENV_FILE_DEV. Add it under Settings → Secrets and variables → Actions."
+            echo "Missing secret ENV_FILE_DEV."
             exit 1
           fi
           printf "%s" "$ENV_FILE_DEV_CONTENT" > .env
@@ -66,13 +66,13 @@ jobs:
       - name: Build (Vite development mode)
         run: pnpm run build:dev
 
-      - name: Package Electron (current runner OS, no publish)
+      - name: Package Electron (current OS)
         shell: bash
         run: pnpm exec electron-builder --publish never '-c.productName=Foxy Exam (Dev)'
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: foxy-exam-dev-${{ matrix.os }}
@@ -80,12 +80,17 @@ jobs:
           if-no-files-found: error
 
   dev-release:
-    name: Update draft Release (dev-desktop)
+    name: Draft Release (dev-desktop)
     needs: build
     if: success()
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout (for gh CLI)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Download all OS artifacts
         uses: actions/download-artifact@v4
         with:
@@ -93,16 +98,18 @@ jobs:
           pattern: foxy-exam-dev-*
           merge-multiple: false
 
-      - name: Recreate draft release with installers
+      - name: Recreate draft release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p upload
-          mapfile -t RAW < <(find artifacts -type f \( -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \) | sort)
+          mapfile -t RAW < <(find artifacts -type f \( \
+            -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" -o -name "*.zip" \
+            \) | sort)
           if [[ ${#RAW[@]} -eq 0 ]]; then
-            echo "No .exe / .AppImage / .deb / .dmg under artifacts/"
+            echo "No installer files under artifacts/"
             find artifacts -type f | head -80 || true
             exit 1
           fi
@@ -121,6 +128,6 @@ jobs:
           gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/dev-desktop" 2>/dev/null || true
           gh release create dev-desktop \
             --draft \
-            --title "Foxy Exam — Dev desktop (latest manual build)" \
-            --notes "Built by **Dev desktop build** workflow. Vite \`development\` mode + \`ENV_FILE_DEV\`. Publish or discard when done." \
+            --title "Foxy Exam — Dev desktop (Linux / Windows / macOS)" \
+            --notes "Dev builds (Vite \`development\` + \`ENV_FILE_DEV\`). Branch \`dev\` or manual run." \
             "${ASSETS[@]}"
