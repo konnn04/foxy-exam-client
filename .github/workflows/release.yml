@@ -1,4 +1,6 @@
-# Semver bump + tag on main/master, then Electron artifacts via tag push (one GitHub Release from electron-builder).
+# Branch push: sync remote → semver bump → commit/tag/push (GITHUB_TOKEN does not fire
+# follow-up workflows) → publish Electron in the same run via workflow_call.
+# Tag push / workflow_dispatch: publish only (e.g. manual tag or PAT-triggered tag builds).
 
 name: Release Electron App
 
@@ -30,11 +32,19 @@ jobs:
       github.ref_type == 'branch' &&
       !contains(github.event.head_commit.message, '[skip ci]')
     runs-on: ubuntu-latest
+    outputs:
+      bumped: ${{ steps.publish.outputs.bumped }}
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync with remote (avoid non-fast-forward push)
+        run: |
+          git fetch origin "$GITHUB_REF_NAME"
+          git pull --rebase origin "$GITHUB_REF_NAME"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -53,7 +63,8 @@ jobs:
         id: bump
         run: |
           pnpm version patch --no-git-tag-version
-          echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Commit, tag, push
         id: publish
@@ -64,6 +75,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json
           if git diff --staged --quiet; then
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
             echo "No staged changes; skipping."
             exit 0
           fi
@@ -72,55 +84,24 @@ jobs:
           TAG="v${NEW_VERSION}"
           git tag -a "$TAG" -m "v${NEW_VERSION}"
           git push origin "$TAG"
+          echo "bumped=true" >> "$GITHUB_OUTPUT"
 
-  release:
+  # Same workflow run as bump — required because pushes with GITHUB_TOKEN do not start new runs.
+  electron-after-bump:
+    name: Electron (post-bump)
+    needs: bump
+    if: needs.bump.outputs.bumped == 'true'
+    uses: ./.github/workflows/electron-publish-matrix.yml
+    secrets: inherit
+
+  # Tag push or manual run — no bump job, so no needs: bump (skipped jobs break dependents).
+  electron-from-tag-or-dispatch:
+    name: Electron (tag or dispatch)
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
-    name: Release (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install Dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Create .env from secret
-        shell: bash
-        env:
-          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE }}
-        run: |
-          if [ -z "$ENV_FILE_CONTENT" ]; then
-            echo "Missing secret ENV_FILE. Add it in Settings > Secrets and variables > Actions."
-            exit 1
-          fi
-          printf "%s" "$ENV_FILE_CONTENT" > .env
-
-      - name: Build Web and Electron Assets
-        run: pnpm run build
-
-      - name: Build and Publish Electron App
-        run: pnpm exec electron-builder --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+    uses: ./.github/workflows/electron-publish-matrix.yml
+    secrets: inherit
 
   release_macos:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.include_macos == true }}
