@@ -13,10 +13,11 @@
     "dev": "vite",
     "lint": "tsc --noEmit",
     "build": "tsc && vite build",
+    "build:dev": "tsc && vite build --mode development",
     "build:electron": "tsc && vite build && electron-builder",
     "release:local": "pnpm run build && electron-builder --publish never",
     "release:linux": "pnpm run build && electron-builder --linux --publish never",
-    "release:win": "pnpm run build && electron-builder --win --publish never",
+    "release:win": "node ./scripts/release-win-guard.mjs && pnpm run build && electron-builder --win --publish never",
     "preview": "vite preview"
   },
   "build": {
