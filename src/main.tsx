@@ -1,6 +1,6 @@
 import "./sentry";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
+import { BrowserRouter, HashRouter } from "react-router-dom";
 import "@/i18n";
 import App from "./App";
 import { ThemeProvider } from "@/components/providers/theme-provider";
@@ -11,8 +11,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import "./index.css";
 
+const isElectron = typeof window !== "undefined" && Boolean((window as any).electronAPI);
+const Router = isElectron ? HashRouter : BrowserRouter;
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <BrowserRouter>
+  <Router>
       <ThemeProvider>
         <TooltipProvider>
           <ConnectionProvider>
@@ -24,5 +27,5 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
           </ConnectionProvider>
         </TooltipProvider>
       </ThemeProvider>
-  </BrowserRouter>
+  </Router>
 );

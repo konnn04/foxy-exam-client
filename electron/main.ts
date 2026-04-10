@@ -4,7 +4,11 @@ import { app, BrowserWindow } from "electron";
 import { configureMediaPermissions } from "./media-permissions";
 import { createMainWindow } from "./main-window";
 import { registerIpcHandlers } from "./ipc-handlers";
-import { appendMainLog } from "./diagnostic-log";
+import {
+  appendMainLog,
+  flushMainLogPreReadyQueue,
+  logMainLogFileLocation,
+} from "./diagnostic-log";
 
 initSentryMain();
 
@@ -31,6 +35,8 @@ app.on("activate", () => {
 });
 
 app.whenReady().then(() => {
+  flushMainLogPreReadyQueue();
+  logMainLogFileLocation();
   configureMediaPermissions();
   registerIpcHandlers(() => mainWindow);
   mainWindow = createMainWindow();
