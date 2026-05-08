@@ -31,7 +31,8 @@ const CRITICAL_EVENT_TYPES = new Set([
 ]);
 
 const TOPIC = "client_telemetry";
-const FLUSH_INTERVAL_MS = 1000;
+/** Balance: lower = more realtime rules on agent; higher = less uplink CPU. */
+const FLUSH_INTERVAL_MS = 800;
 const MAX_BUFFER_SIZE = 200;
 
 // ─── Dedup tracking ──────────────────────────────────────────
@@ -45,14 +46,15 @@ const TYPE_DEDUP_MS: Record<string, number> = {
   mouse_click: 1000,
   text_typed: 3000,
   essay_typed: 3000,
-  face_gaze: 1000,
+  face_gaze: 750,
   perf_metrics: 2000,
   answer_selected: 800,
   question_navigated: 800,
   question_marked: 800,
   multiple_screens: 10_000,
-  window_blur: 3000,
-  tab_switch: 3000,
+  /** Short window: only suppress double-fire from the same OS gesture (~blur + visibility). */
+  window_blur: 500,
+  tab_switch: 500,
   exit_fullscreen: 5000,
   connection_lost: 10_000,
   banned_app_detected: 10_000,

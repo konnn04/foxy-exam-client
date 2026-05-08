@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, startTransition } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import { useExamSocketStore, useExamSocket } from "@/hooks/use-exam-socket";
@@ -88,9 +88,17 @@ export function ExamSession({
 
   const [isScreenSharing, setIsScreenSharing] = useState(!!initialScreenStream);
   const [isLiveKitConnected, setIsLiveKitConnected] = useState(false);
+  const wsReconnectGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsDisconnectedRef = useRef(false);
+  const blurReasonRef = useRef("");
   
   const screenStreamRef = useRef<MediaStream | null>(initialScreenStream);
   const dismissCooldownRef = useRef(false); // suppress events during dismiss
+  const WS_DISCONNECT_BLUR_MSG = "Mất kết nối mạng hoặc máy chủ giám sát. Đang kết nối lại...";
+
+  useEffect(() => {
+    blurReasonRef.current = blurReason;
+  }, [blurReason]);
 
   // ─── Telemetry lifecycle ─────────────────────────────────
   useEffect(() => {
@@ -351,19 +359,34 @@ export function ExamSession({
       totalQuestions: data.questions.total,
     });
 
-    useExamSocketStore.getState().onDisconnect(() => {
+    const unsubDisconnect = useExamSocketStore.getState().onDisconnect(() => {
       setWsDisconnected(true);
-      setIsBlurred(true);
-      setBlurReason('Mất kết nối mạng hoặc máy chủ giám sát. Đang kết nối lại...');
+      wsDisconnectedRef.current = true;
+      // Avoid lock flapping on short websocket blips.
+      if (wsReconnectGraceTimerRef.current) return;
+      wsReconnectGraceTimerRef.current = setTimeout(() => {
+        wsReconnectGraceTimerRef.current = null;
+        if (!wsDisconnectedRef.current) return;
+        setIsBlurred(true);
+        setBlurReason(WS_DISCONNECT_BLUR_MSG);
+      }, 5000);
     });
 
-    useExamSocketStore.getState().onReconnect(() => {
+    const unsubReconnect = useExamSocketStore.getState().onReconnect(() => {
       setWsDisconnected(false);
-      setIsBlurred(false);
-      setBlurReason('');
+      wsDisconnectedRef.current = false;
+      if (wsReconnectGraceTimerRef.current) {
+        clearTimeout(wsReconnectGraceTimerRef.current);
+        wsReconnectGraceTimerRef.current = null;
+      }
+      // Do not clear other lock reasons (fullscreen, banned app, etc.).
+      if (blurReasonRef.current === WS_DISCONNECT_BLUR_MSG) {
+        setIsBlurred(false);
+        setBlurReason("");
+      }
     });
 
-    useExamSocketStore.getState().onViolation((event: {
+    const unsubViolation = useExamSocketStore.getState().onViolation((event: {
       violationId?: number;
       type?: string;
       severity?: string;
@@ -380,20 +403,24 @@ export function ExamSession({
       };
       const message = labels[vType] || `Giám sát ghi nhận vi phạm (${vType}).`;
 
-      setViolations((prev) => [
-        ...prev,
-        { type: vType, timestamp: Date.now(), message, fromServer: true },
-      ]);
+      startTransition(() => {
+        setViolations((prev) => [
+          ...prev,
+          { type: vType, timestamp: Date.now(), message, fromServer: true },
+        ]);
+      });
 
       const critical =
         event.severity === "critical" ||
         vType === "prohibited_object" ||
         vType === "face_verification_failed";
       if (critical) {
-        toast.error(message);
+        queueMicrotask(() => toast.error(message));
         if (!(DEVELOPMENT_MODE.ENABLED && NO_LOCKSCREEN_WHEN_DEV_MODE)) {
-          setIsBlurred(true);
-          setBlurReason(message);
+          startTransition(() => {
+            setIsBlurred(true);
+            setBlurReason(message);
+          });
         }
       }
     });
@@ -404,6 +431,16 @@ export function ExamSession({
         localStream: cameraStream,
       });
     }
+
+    const requiresLiveKit =
+      config?.level === "strict" ||
+      config?.requireCamera === true ||
+      config?.requireMic === true ||
+      config?.requireScreenShare === true ||
+      config?.requireDualCamera === true ||
+      config?.monitorGaze === true ||
+      config?.detectBannedObjects === true ||
+      config?.detectBannedApps === true;
 
     // ─── LiveKit: connect to SFU (once) ──────────────────
     (async () => {
@@ -425,9 +462,18 @@ export function ExamSession({
         if (connected) {
           setIsLiveKitConnected(true);
           console.log('[ExamTake] LiveKit connected, waiting for stream effects to publish tracks');
+        } else if (requiresLiveKit) {
+          toast.error("Không thể kết nối giám sát LiveKit. Vui lòng thử vào lại bài thi.");
+          await exitExamFullscreen();
+          navigate(`/exams/${examIdNum}`, { replace: true });
         }
       } catch (err) {
         console.warn('[ExamTake] LiveKit connect failed:', err);
+        if (requiresLiveKit) {
+          toast.error("Không thể kết nối giám sát LiveKit. Vui lòng thử vào lại bài thi.");
+          await exitExamFullscreen();
+          navigate(`/exams/${examIdNum}`, { replace: true });
+        }
       }
     })();
 
@@ -480,6 +526,13 @@ export function ExamSession({
     }, 30000);
 
     return () => {
+      if (wsReconnectGraceTimerRef.current) {
+        clearTimeout(wsReconnectGraceTimerRef.current);
+        wsReconnectGraceTimerRef.current = null;
+      }
+      unsubDisconnect();
+      unsubReconnect();
+      unsubViolation();
       webrtcService.destroy();
       livekitPublisher.disconnect();
       window.removeEventListener('webrtc-signal', handleSignal as EventListener);

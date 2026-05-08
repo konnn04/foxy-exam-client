@@ -35,7 +35,8 @@ export const WebcamPopup = forwardRef<WebcamPopupHandle, WebcamPopupProps>(({ st
   const latestLandmarksRef = useRef<any[] | null>(null);
   
   const [minimized, setMinimized] = useState(false);
-  const [showMesh, setShowMesh] = useState(true);
+  // Face mesh overlay is visually useful but expensive to draw every frame.
+  const [showMesh, setShowMesh] = useState(false);
   const [position, setPosition] = useState(initialBottomRightPosition);
   const [dragging, setDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });

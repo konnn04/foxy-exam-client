@@ -12,6 +12,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Video, VideoOff, CheckCircle, AlertTriangle, Mic, Smartphone } from "lucide-react";
 import { DEVELOPMENT_MODE } from "@/config/security.config";
+import { CAMERA_CAPTURE_MAX_FPS } from "@/config/detection.config";
 import api from "@/lib/api";
 import { livekitPublisher } from "@/lib/livekit-publisher";
 
@@ -37,6 +38,7 @@ export function CameraCheck({
   clientConfig,
 }: CameraCheckProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const pipVideoRef = useRef<HTMLVideoElement>(null);
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedVideoId, setSelectedVideoId] = useState<string>("");
@@ -57,6 +59,9 @@ export function CameraCheck({
   const [qrBinding, setQrBinding] = useState(false);
   /** Phone video (+ optional laptop mic) — shown in preview until user confirms. */
   const [relayPreviewStream, setRelayPreviewStream] = useState<MediaStream | null>(null);
+
+  // Derived from clientConfig prop - computed once at the top so it's accessible in all hooks
+  const requireDualCamera = clientConfig?.requireDualCamera === true;
 
   const resetQrSession = useCallback(() => {
     setQrUrl(null);
@@ -85,6 +90,7 @@ export function CameraCheck({
       const ok = await livekitPublisher.ensureConnected(
         {
           examId: examIdNum,
+          attemptId: parseInt(attemptId, 10),
           onError: (msg) => setQrError(msg),
         },
         { requireSupervisorAgent: false },
@@ -177,7 +183,7 @@ export function CameraCheck({
       setError(null);
 
       try {
-        const fps = clientConfig?.fps || 10;
+        const fps = Math.min(clientConfig?.fps ?? CAMERA_CAPTURE_MAX_FPS, CAMERA_CAPTURE_MAX_FPS);
         const height = clientConfig?.height || 720;
 
         const constraints: MediaStreamConstraints = {
@@ -224,12 +230,23 @@ export function CameraCheck({
     if (!el) {
       return;
     }
-    const toShow = relayPreviewStream ?? stream;
+    // In dual camera mode, main video always shows the PC webcam stream, not the relay
+    const toShow = requireDualCamera ? stream : (relayPreviewStream ?? stream);
     el.srcObject = toShow;
     if (toShow) {
       void el.play().catch(() => {});
     }
-  }, [relayPreviewStream, stream]);
+  }, [relayPreviewStream, stream, requireDualCamera]);
+
+  // PIP: bind relay preview to the pip video element (dual camera mode)
+  useEffect(() => {
+    const pip = pipVideoRef.current;
+    if (!pip) return;
+    pip.srcObject = relayPreviewStream;
+    if (relayPreviewStream) {
+      void pip.play().catch(() => {});
+    }
+  }, [relayPreviewStream]);
 
   /** First time user lands on «Điện thoại (QR)» (or no webcam default) → create QR once per selection. */
   useEffect(() => {
@@ -297,6 +314,7 @@ export function CameraCheck({
         const ok = await livekitPublisher.ensureConnected(
           {
             examId: examIdNum,
+            attemptId: parseInt(attemptId, 10),
             onError: (msg) => setQrError(msg),
           },
           { requireSupervisorAgent: false },
@@ -374,6 +392,12 @@ export function CameraCheck({
   }, [resetQrSession, videoDevices]);
 
   const handleConfirm = () => {
+    if (requireDualCamera && relayPreviewStream && onMobileRelayReady) {
+      // In dual camera mode, pass the relay stream via callback, but also continue to onConfirm for the main webcam
+      onMobileRelayReady(relayPreviewStream);
+      if (stream) onConfirm(stream);
+      return;
+    }
     if (selectedVideoId === MOBILE_QR_DEVICE_ID && relayPreviewStream && onMobileRelayReady) {
       onMobileRelayReady(relayPreviewStream);
       return;
@@ -384,9 +408,11 @@ export function CameraCheck({
   };
 
   const previewHasVideo = Boolean(stream) || Boolean(relayPreviewStream);
+  
   const canConfirmWebcam = selectedVideoId !== MOBILE_QR_DEVICE_ID && cameraReady;
+
   const canConfirmMobile = selectedVideoId === MOBILE_QR_DEVICE_ID && relayPreviewStream !== null;
-  const canConfirm = canConfirmWebcam || canConfirmMobile;
+  const canConfirm = requireDualCamera ? (canConfirmWebcam && relayPreviewStream !== null) : (canConfirmWebcam || canConfirmMobile);
 
   const showQrActiveOnPreview =
     selectedVideoId === MOBILE_QR_DEVICE_ID &&
@@ -408,6 +434,12 @@ export function CameraCheck({
               className="absolute inset-0 w-full h-full object-cover"
               style={{ transform: "scaleX(-1)", zIndex: 1 }}
             />
+            {requireDualCamera && relayPreviewStream && (
+               <div className="absolute bottom-4 right-4 w-40 aspect-video rounded-lg border-2 border-green-500 overflow-hidden shadow-2xl z-20 bg-black">
+                 <video ref={pipVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" style={{ transform: "scaleX(-1)" }} />
+                 <span className="absolute top-1 left-1 text-[9px] bg-green-600/80 text-white px-1 rounded">📱 Cam phụ</span>
+               </div>
+            )}
             {!previewHasVideo && !error && !showQrActiveOnPreview && (
               <div className="absolute inset-0 flex items-center justify-center text-white/60" style={{ zIndex: 10 }}>
                 <VideoOff className="h-12 w-12" />
@@ -474,7 +506,7 @@ export function CameraCheck({
                           {device.label || `Camera ${idx + 1}`}
                         </SelectItem>
                       ))}
-                      {onMobileRelayReady && (
+                      {onMobileRelayReady && !requireDualCamera && (
                         <SelectItem value={MOBILE_QR_DEVICE_ID}>
                           <span className="flex items-center gap-2">
                             <Smartphone className="h-4 w-4 shrink-0" />
@@ -484,7 +516,46 @@ export function CameraCheck({
                       )}
                     </SelectContent>
                   </Select>
-                  {selectedVideoId === MOBILE_QR_DEVICE_ID && onMobileRelayReady && (
+                  
+                  {requireDualCamera && onMobileRelayReady && (
+                    <div className="mt-4 rounded-md border border-border bg-muted/30 p-2 space-y-2">
+                      <p className="text-sm font-semibold text-primary flex items-center gap-2"><Smartphone className="w-4 h-4"/> Bắt buộc: Camera phụ (Điện thoại)</p>
+                      {qrLoading && <p className="text-[11px] text-muted-foreground">Đang tạo mã QR...</p>}
+                      {!qrUrl && !qrLoading && (
+                         <Button type="button" variant="secondary" size="sm" className="h-7 text-xs w-full" onClick={() => void issueQrAndPoll()}>Tạo mã QR kết nối Camera phụ</Button>
+                      )}
+                      {qrUrl && (
+                        <div className="flex gap-2 items-start">
+                          <div className="shrink-0 rounded bg-white p-1">
+                            <QRCodeSVG value={qrUrl} size={104} level="M" />
+                          </div>
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <p className="text-[10px] text-muted-foreground leading-snug">
+                              Quét mã bằng điện thoại, chọn cho phép Camera và bấm «Bắt đầu».
+                            </p>
+                            {(pollingRelay || qrBinding) && !relayPreviewStream && (
+                              <p className="text-[10px] text-primary animate-pulse">
+                                {qrBinding ? "Đang kết nối..." : "Đang chờ điện thoại..."}
+                              </p>
+                            )}
+                            {relayPreviewStream && (
+                              <p className="text-[10px] text-green-500 font-bold">
+                                ✓ Đã kết nối thành công Camera phụ.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {qrError && (
+                        <div className="space-y-1">
+                          <p className="text-[11px] text-destructive">{qrError}</p>
+                          <Button type="button" variant="secondary" size="sm" className="h-7 text-xs" onClick={() => void issueQrAndPoll()}>Thử tạo mã lại</Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {selectedVideoId === MOBILE_QR_DEVICE_ID && onMobileRelayReady && !requireDualCamera && (
                     <div className="mt-2 rounded-md border border-border bg-muted/30 p-2 space-y-2">
                       {qrLoading && (
                         <p className="text-[11px] text-muted-foreground">Đang tạo mã QR…</p>

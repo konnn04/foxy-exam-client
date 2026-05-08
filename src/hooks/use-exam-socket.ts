@@ -44,10 +44,11 @@ interface ExamSocketStore {
   sendSignal: (signalType: string, data: any, toUserId: number) => Promise<void>;
   uploadFaceCrop: (imageBase64: string) => Promise<boolean | null>;
 
-  onDisconnect: (cb: () => void) => void;
-  onReconnect: (cb: () => void) => void;
-  onMonitorEvent: (cb: (event: any) => void) => void;
-  onViolation: (cb: (violation: any) => void) => void;
+  /** Returns unsubscribe — must call on cleanup to avoid stacked handlers when effects re-run. */
+  onDisconnect: (cb: () => void) => () => void;
+  onReconnect: (cb: () => void) => () => void;
+  onMonitorEvent: (cb: (event: any) => void) => () => void;
+  onViolation: (cb: (violation: any) => void) => () => void;
 }
 
 export const useExamSocketStore = create<ExamSocketStore>((set, get) => ({
@@ -115,10 +116,34 @@ export const useExamSocketStore = create<ExamSocketStore>((set, get) => ({
     }
   },
 
-  onDisconnect: (cb) => set((state) => ({ onDisconnectCallbacks: [...state.onDisconnectCallbacks, cb] })),
-  onReconnect: (cb) => set((state) => ({ onReconnectCallbacks: [...state.onReconnectCallbacks, cb] })),
-  onMonitorEvent: (cb) => set((state) => ({ onEventCallbacks: [...state.onEventCallbacks, cb] })),
-  onViolation: (cb) => set((state) => ({ onViolationCallbacks: [...state.onViolationCallbacks, cb] })),
+  onDisconnect: (cb) => {
+    set((state) => ({ onDisconnectCallbacks: [...state.onDisconnectCallbacks, cb] }));
+    return () =>
+      set((state) => ({
+        onDisconnectCallbacks: state.onDisconnectCallbacks.filter((x) => x !== cb),
+      }));
+  },
+  onReconnect: (cb) => {
+    set((state) => ({ onReconnectCallbacks: [...state.onReconnectCallbacks, cb] }));
+    return () =>
+      set((state) => ({
+        onReconnectCallbacks: state.onReconnectCallbacks.filter((x) => x !== cb),
+      }));
+  },
+  onMonitorEvent: (cb) => {
+    set((state) => ({ onEventCallbacks: [...state.onEventCallbacks, cb] }));
+    return () =>
+      set((state) => ({
+        onEventCallbacks: state.onEventCallbacks.filter((x) => x !== cb),
+      }));
+  },
+  onViolation: (cb) => {
+    set((state) => ({ onViolationCallbacks: [...state.onViolationCallbacks, cb] }));
+    return () =>
+      set((state) => ({
+        onViolationCallbacks: state.onViolationCallbacks.filter((x) => x !== cb),
+      }));
+  },
 }));
 
 /**

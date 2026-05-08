@@ -1,4 +1,4 @@
-import { BrowserWindow } from "electron";
+import { BrowserWindow, shell } from "electron";
 
 type HardeningOptions = {
   isProduction: boolean;
@@ -20,6 +20,14 @@ export const applyWindowSecurity = (
     mainWindow.webContents.send("devtools-opened");
   });
 
+  // Mở link ngoài (http/https) bằng trình duyệt hệ thống, không tạo cửa sổ con trong app
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) {
+      shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+
   if (!isProduction) {
     return;
   }
@@ -30,8 +38,6 @@ export const applyWindowSecurity = (
   mainWindow.webContents.on("context-menu", (event) => {
     event.preventDefault();
   });
-
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
     const allowed = (devServerUrl && url.startsWith(devServerUrl)) || url.startsWith("file://");

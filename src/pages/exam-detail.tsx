@@ -411,7 +411,7 @@ export default function ExamDetailPage() {
       )}
 
       {/* Face Registration Instructions */}
-      <FaceRegistrationModal open={showFaceModal} onOpenChange={setShowFaceModal} />
+      <FaceRegistrationModal open={showFaceModal} onOpenChange={setShowFaceModal} examId={id} />
     </div>
   );
 }

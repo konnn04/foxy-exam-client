@@ -12,13 +12,13 @@ function containsVmKeyword(input: string): boolean {
 
 export class WindowsOps implements IPlatformOps {
   getProcessListCommand(): string {
-    return "tasklist /V /FO CSV /NH";
+    return "tasklist /FO CSV /NH";
   }
 
   parseProcessList(stdout: string): ProcessInfo[] {
     return stdout.split(/\r?\n/).filter(Boolean).map((line) => {
       const cols = line.match(/"([^"]*)"/g);
-      if (!cols || cols.length < 7) {
+      if (!cols || cols.length < 5) {
         const parts = line.replace(/"/g, "").split(",");
         return { name: parts[0]?.trim() || "", pid: parseInt(parts[1]) || 0, user: "" };
       }
@@ -26,13 +26,13 @@ export class WindowsOps implements IPlatformOps {
       return {
         name: strip(cols[0]),
         pid: parseInt(strip(cols[1])) || 0,
-        user: strip(cols[6]),
+        user: "",
       };
     });
   }
 
   getBannedAppsCommand(): string {
-    return "tasklist /V /FO CSV /NH";
+    return "tasklist /FO CSV /NH";
   }
 
   async detectVirtualMachine(): Promise<VmDetectionResult> {

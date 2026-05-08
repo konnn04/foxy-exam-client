@@ -41,6 +41,7 @@ export interface ExamTrackingConfig {
   monitorGaze?: boolean;
   requireMic?: boolean;
   requireFaceAuth?: boolean;
+  requireDualCamera?: boolean;
   detectBannedApps?: boolean;
   detectBannedObjects?: boolean;
   bannedApps?: string[];

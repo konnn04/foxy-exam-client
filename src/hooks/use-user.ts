@@ -5,14 +5,16 @@ import { STORAGE_KEYS } from "@/config";
 
 export interface User {
   id: number;
-  name: string;
+  first_name: string;
+  last_name: string;
   email: string;
   username?: string;
   avatar?: string;
+  avatar_url?: string;
   gender?: string;
   phone?: string;
-  address?: string;
-  created_at?: string;
+  role?: string;
+  status?: string;
 }
 
 interface UserStore {

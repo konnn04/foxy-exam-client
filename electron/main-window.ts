@@ -33,11 +33,14 @@ export const createMainWindow = () => {
   mainWindow.webContents.on("did-finish-load", () => {
     appendMainLog("did-finish-load");
   });
-  mainWindow.webContents.on("console-message", (_e, level, message) => {
-    if (level >= 2) {
-      appendMainLog(`renderer console level=${level} ${message}`);
-    }
-  });
+  // Renderer console can be very noisy in long exam sessions; keep it only in diagnostic mode.
+  if (allowDebug) {
+    mainWindow.webContents.on("console-message", (_e, level, message) => {
+      if (level >= 2) {
+        appendMainLog(`renderer console level=${level} ${message}`);
+      }
+    });
+  }
 
   if (ELECTRON_RUNTIME.devServerUrl) {
     appendMainLog(`loadURL ${ELECTRON_RUNTIME.devServerUrl}`);

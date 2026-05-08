@@ -1,17 +1,23 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Plugin, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import electron from "vite-plugin-electron/simple";
 import path from "path";
 import { fileURLToPath } from "url";
+import { readFileSync } from "fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/**
- * Strip `crossorigin` from built HTML.
- * Chromium on Windows blocks ES-module scripts with `crossorigin` on `file://`
- * (opaque origin → silent CORS failure → blank screen, no console errors).
- */
+function loadIntegritySecret(): string {
+  try {
+    const env = readFileSync(path.join(__dirname, ".env"), "utf-8");
+    const match = env.match(/^INTEGRITY_SECRET=["']?(.+?)["']?\s*$/m);
+    return match?.[1] ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function removeCrossOrigin(): Plugin {
   return {
     name: "remove-crossorigin",
@@ -22,7 +28,7 @@ function removeCrossOrigin(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   base: './',
   plugins: [
     react(),
@@ -31,6 +37,11 @@ export default defineConfig({
     electron({
       main: {
         entry: "electron/main.ts",
+        vite: {
+          define: {
+            __INTEGRITY_SECRET__: JSON.stringify(loadIntegritySecret()),
+          },
+        },
       },
       preload: {
         input: "electron/preload.ts",
@@ -43,4 +54,22 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-});
+  build: {
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true,
+        passes: 2,
+        dead_code: true,
+      },
+      mangle: {
+        toplevel: true,
+        properties: { regex: /^_/ },
+      },
+      format: {
+        comments: false,
+      },
+    },
+  },
+}));

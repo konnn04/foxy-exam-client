@@ -9,6 +9,7 @@ import {
   RoomEvent,
   Track,
   ConnectionState,
+  type LocalTrack,
   type LocalTrackPublication,
   type RemoteParticipant,
 } from "livekit-client";
@@ -36,6 +37,9 @@ class LiveKitPublisher {
   private connectMutex: Promise<boolean> | null = null;
   /** Skip repeat agent-in-room polling after first success for this attempt. */
   private roomPresenceOk: { examId: number; attemptId: number } | null = null;
+  /** Avoid stacking duplicate camera/mic/screen publications when React effects re-run. */
+  private lastCameraPublishSig: string | null = null;
+  private lastScreenPublishSig: string | null = null;
 
   private hasRoomPresenceOk(examId: number, attemptId: number): boolean {
     return (
@@ -124,7 +128,14 @@ class LiveKitPublisher {
     this.examId = config.examId;
 
     try {
-      const res = await api.get(`/student/exams/${this.examId}/proctor/token`);
+      if (config.attemptId == null) {
+        this.onError?.("Thiếu mã lượt thi để kết nối giám sát LiveKit.");
+        return false;
+      }
+
+      const res = await api.get(`/student/exams/${this.examId}/proctor/token`, {
+        params: { attempt_id: config.attemptId },
+      });
       const { token, ws_url } = res.data;
 
       this.room = new Room({
@@ -254,6 +265,31 @@ class LiveKitPublisher {
     const includeVideo = opts?.includeVideo !== false;
     const includeAudio = opts?.includeAudio !== false;
 
+    const vidId = includeVideo ? stream.getVideoTracks()[0]?.id ?? "" : "";
+    const audId = includeAudio ? stream.getAudioTracks()[0]?.id ?? "" : "";
+    const sig = `cam:${vidId}|${audId}|v${includeVideo ? 1 : 0}|a${includeAudio ? 1 : 0}`;
+    if (this.lastCameraPublishSig === sig) {
+      return [];
+    }
+
+    const lp = this.room.localParticipant;
+    for (const publication of lp.trackPublications.values()) {
+      if (
+        publication.source !== Track.Source.Camera &&
+        publication.source !== Track.Source.Microphone
+      ) {
+        continue;
+      }
+      const tr = publication.track;
+      if (tr) {
+        try {
+          await lp.unpublishTrack(tr as LocalTrack);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
     const publications: LocalTrackPublication[] = [];
 
     try {
@@ -277,8 +313,10 @@ class LiveKitPublisher {
       }
 
       console.log(`[LiveKitPublisher] Published camera: ${publications.length} tracks`);
+      this.lastCameraPublishSig = sig;
     } catch (err) {
       console.error("[LiveKitPublisher] Failed to publish camera:", err);
+      this.lastCameraPublishSig = null;
     }
 
     return publications;
@@ -291,6 +329,25 @@ class LiveKitPublisher {
     if (!this.room || this.room.state !== ConnectionState.Connected) {
       console.warn("[LiveKitPublisher] Not connected, cannot publish screen");
       return [];
+    }
+
+    const screenId = stream.getVideoTracks()[0]?.id ?? "";
+    const screenSig = `scr:${screenId}`;
+    if (this.lastScreenPublishSig === screenSig) {
+      return [];
+    }
+
+    const lp = this.room.localParticipant;
+    for (const publication of lp.trackPublications.values()) {
+      if (publication.source !== Track.Source.ScreenShare) continue;
+      const tr = publication.track;
+      if (tr) {
+        try {
+          await lp.unpublishTrack(tr as LocalTrack);
+        } catch {
+          /* ignore */
+        }
+      }
     }
 
     const publications: LocalTrackPublication[] = [];
@@ -307,8 +364,10 @@ class LiveKitPublisher {
       }
 
       console.log(`[LiveKitPublisher] Published screen: ${publications.length} tracks`);
+      this.lastScreenPublishSig = screenSig;
     } catch (err) {
       console.error("[LiveKitPublisher] Failed to publish screen:", err);
+      this.lastScreenPublishSig = null;
     }
 
     return publications;
@@ -350,8 +409,9 @@ class LiveKitPublisher {
     if (await publishOnce()) {
       return;
     }
-    for (let i = 0; i < 12; i++) {
-      await new Promise((r) => setTimeout(r, 300));
+    // Fewer retries — long loops kept the tab busy when many violations fired in sequence.
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 400));
       if (await publishOnce()) {
         return;
       }
@@ -493,6 +553,8 @@ class LiveKitPublisher {
     this.examId = 0;
     this.proctorCommandListenerActive = false;
     this.roomPresenceOk = null;
+    this.lastCameraPublishSig = null;
+    this.lastScreenPublishSig = null;
     console.log("[LiveKitPublisher] Disconnected");
   }
 

@@ -186,16 +186,34 @@ export function useAudioMonitor({
       const processor = audioContext.createScriptProcessor(16384, 1, 1);
       processorRef.current = processor;
 
+      let speechSecCount = 0;
+      let speechReported = {low: false, medium: false};
+
+      let classifySkipCount = 0;
+
       processor.onaudioprocess = (e) => {
         if (!classifierRef.current || !enabled) return;
 
         const inputData = e.inputBuffer.getChannelData(0);
-        // Copy data to avoid detached buffer issues
+
+        // Energy gate: skip expensive ML inference when audio is near-silent
+        let sumSq = 0;
+        for (let i = 0; i < inputData.length; i += 16) sumSq += inputData[i] * inputData[i];
+        const rms = Math.sqrt(sumSq / (inputData.length / 16));
+        if (rms < 0.01) {
+          classifySkipCount++;
+          if (classifySkipCount > 2) { setSpeechDetected(false); }
+          return;
+        }
+        classifySkipCount = 0;
+
         const audioData = new Float32Array(inputData.length);
         audioData.set(inputData);
 
         try {
           const results = classifierRef.current.classify(audioData);
+          let isSpeech = false;
+          let maxConfidence = 0;
           
           if (results && results.length > 0) {
             for (const result of results) {
@@ -203,27 +221,50 @@ export function useAudioMonitor({
               
               for (const category of result.classifications[0].categories) {
                 if (category.categoryName === 'Speech' && category.score >= speechThreshold) {
-                  setSpeechDetected(true);
-                  
-                  const now = Date.now();
-                  if (now - lastClipTimeRef.current > cooldownMs && !isRecordingRef.current) {
-                    lastClipTimeRef.current = now;
-                    
-                    // Log event
-                    useExamSocketStore.getState().logEvent('speech_detected', {
-                      confidence: category.score,
-                      localTime: new Date().toISOString(),
-                    });
-
-                    // Record and upload clip
-                    recordAndUpload(stream);
-                  }
-                  return;
+                  isSpeech = true;
+                  maxConfidence = Math.max(maxConfidence, category.score);
                 }
               }
             }
           }
-          setSpeechDetected(false);
+
+          if (isSpeech) {
+            setSpeechDetected(true);
+            speechSecCount += 1;
+            const dur = speechSecCount;
+            
+            // At 5 seconds: trigger LOW violation and record clip
+            if (dur >= 5 && !speechReported.low) {
+                speechReported.low = true;
+                
+                useExamSocketStore.getState().logEvent('speech_detected_low', {
+                  duration: dur,
+                  confidence: maxConfidence,
+                  localTime: new Date().toISOString(),
+                });
+
+                const now = Date.now();
+                if (now - lastClipTimeRef.current > cooldownMs && !isRecordingRef.current) {
+                  lastClipTimeRef.current = now;
+                  recordAndUpload(stream);
+                }
+            }
+            
+            // At 10 seconds: trigger MEDIUM violation
+            if (dur >= 10 && !speechReported.medium) {
+                speechReported.medium = true;
+                
+                useExamSocketStore.getState().logEvent('speech_detected_medium', {
+                  duration: dur,
+                  confidence: maxConfidence,
+                  localTime: new Date().toISOString(),
+                });
+            }
+          } else {
+            setSpeechDetected(false);
+            speechSecCount = 0;
+            speechReported = {low: false, medium: false};
+          }
         } catch (err) {
           // Classification can fail if buffer is wrong size, silently ignore
         }

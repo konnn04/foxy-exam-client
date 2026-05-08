@@ -8,6 +8,7 @@ import {
   FACE_MONITOR_TIMING,
   MOUTH_DETECTION,
   FACE_EVENT_LOG,
+  MEDIAPIPE_CONFIG,
 } from "@/config";
 import api from "@/lib/api";
 import { useProctorStore } from "@/stores/use-proctor-store";
@@ -37,6 +38,8 @@ export function useFaceMonitor(
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
   const requestRef = useRef<number>(0);
+  /** Avoid 60 RAF/s when throttled — schedule next infer tick with timeout instead. */
+  const throttleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastVideoTimeRef = useRef<number>(-1);
   const nullFrameCounterRef = useRef(0);
   const lastProcessTimeRef = useRef(0);
@@ -116,6 +119,16 @@ export function useFaceMonitor(
     const video = videoRef.current;
 
     const now = performance.now();
+    const minIv = MEDIAPIPE_CONFIG.FACE_GAZE_PROCESS_INTERVAL_MS;
+    if (now - lastProcessTimeRef.current < minIv) {
+      const wait = Math.max(0, minIv - (now - lastProcessTimeRef.current));
+      if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current);
+      throttleTimerRef.current = setTimeout(() => {
+        throttleTimerRef.current = null;
+        requestRef.current = requestAnimationFrame(processFrame);
+      }, wait);
+      return;
+    }
     lastProcessTimeRef.current = now;
     const faceWarmupMs = 10_000;
     const inFaceWarmup =
@@ -349,6 +362,10 @@ export function useFaceMonitor(
     }
     return () => {
       cancelAnimationFrame(requestRef.current);
+      if (throttleTimerRef.current) {
+        clearTimeout(throttleTimerRef.current);
+        throttleTimerRef.current = null;
+      }
     };
   }, [isLoaded, active, processFrame]);
 
