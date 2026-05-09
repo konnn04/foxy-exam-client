@@ -1,4 +1,3 @@
-# Called from release.yml — Linux / Windows / macOS matrix (uiohook-napi needs X11 headers on Linux).
 on:
   workflow_call:
 

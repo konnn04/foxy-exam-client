@@ -1,7 +1,3 @@
-# Dev installers (Linux / Windows / macOS) + draft Release (tag dev-desktop).
-# Triggers: push to `dev`, or workflow_dispatch.
-# Secret: ENV_FILE_DEV
-
 name: Dev desktop build
 
 on:
