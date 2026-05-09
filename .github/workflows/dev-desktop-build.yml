@@ -159,6 +159,8 @@ jobs:
 
       - name: Recreate draft release
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p upload
