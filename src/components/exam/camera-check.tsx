@@ -14,6 +14,7 @@ import { Video, VideoOff, CheckCircle, AlertTriangle, Mic, Smartphone } from "lu
 import { DEVELOPMENT_MODE } from "@/config/security.config";
 import { CAMERA_CAPTURE_MAX_FPS } from "@/config/detection.config";
 import api from "@/lib/api";
+import { API_ENDPOINTS } from "@/config";
 import { livekitPublisher } from "@/lib/livekit-publisher";
 
 /** Virtual device: phone publishes via LiveKit `-mobile` identity; not a system videoinput. */
@@ -99,7 +100,7 @@ export function CameraCheck({
         setQrError((prev) => prev ?? "Không kết nối được máy chủ giám sát (LiveKit).");
         return;
       }
-      const res = await api.post(`/student/exams/${examId}/take/${attemptId}/mobile-camera-token`);
+      const res = await api.post(API_ENDPOINTS.MOBILE_CAMERA_TOKEN(examId, attemptId));
       const url = res.data?.url as string | undefined;
       if (!url) {
         setQrError("Không tạo được liên kết. Thử lại sau.");
@@ -366,7 +367,7 @@ export function CameraCheck({
     const t = window.setInterval(async () => {
       try {
         const res = await api.get(
-          `/student/exams/${examId}/take/${attemptId}/mobile-camera-relay-status`,
+          API_ENDPOINTS.MOBILE_CAMERA_RELAY_STATUS(examId, attemptId),
         );
         if (cancelled) return;
         if (res.data?.relay_ack) {

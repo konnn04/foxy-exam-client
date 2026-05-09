@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
+import { API_ENDPOINTS } from "@/config";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import { useExamSocketStore } from "@/hooks/use-exam-socket";
 import type { ExamTrackingConfig } from "@/types/exam";
@@ -65,7 +66,7 @@ export default function ExamTakePage() {
           }
 
           const res = await api.post(
-            `/student/exams/${examId}/take/${attemptId}/begin`,
+            API_ENDPOINTS.EXAM_TAKE_BEGIN(examId, attemptId),
             beginBody
           );
 

@@ -7,6 +7,7 @@ import { acquireFaceLandmarker, extractPitchYaw, releaseFaceLandmarker } from "@
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { API_ENDPOINTS } from "@/config";
 
 interface FaceAuthCheckProps {
   examId: string;
@@ -32,7 +33,6 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
   const capturedRef = useRef<string[]>([]);
 
   const ANGLE_LABELS = ["Nhìn thẳng", "Quay trái", "Quay phải"];
-  const ANGLE_ICONS = [null, ArrowLeft, ArrowRight];
   const HOLD_MS = 600;
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
@@ -144,7 +144,7 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
         capturedRef.current.map(async (b64) => {
           const fd = new FormData();
           fd.append("image", b64.replace(/^data:image\/[a-z]+;base64,/, ""));
-          return (await api.post(`/student/exams/${examId}/verify-identity`, fd)).data.match === true;
+          return (await api.post(API_ENDPOINTS.EXAM_VERIFY_IDENTITY(examId), fd)).data.match === true;
         })
       );
       if (results.every((m) => m)) {

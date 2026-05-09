@@ -22,9 +22,16 @@ export function useExamHistoryLock(enabled: boolean) {
       toast.info(t("exam.historyBlocked"));
     };
 
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+
     window.addEventListener("popstate", onPopState);
+    window.addEventListener("beforeunload", onBeforeUnload);
     return () => {
       window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("beforeunload", onBeforeUnload);
     };
   }, [enabled, t, toast]);
 }

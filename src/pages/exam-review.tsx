@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import api from "@/lib/api";
+import { API_ENDPOINTS } from "@/config";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import {
   Card,
@@ -211,7 +212,7 @@ export default function ExamReviewPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await api.get(`/student/exams/${examId}/review/${attemptId}`);
+        const res = await api.get(API_ENDPOINTS.EXAM_REVIEW(examId!, attemptId!));
         setData(res.data);
       } catch {
         toast.error(t("review.loadError"));

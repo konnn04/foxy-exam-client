@@ -82,19 +82,19 @@ export const MONITORING_THRESHOLDS = {
 };
 
 // ─── Mouth / Talking Detection ──────────────────────────────────────
-
+// Reduced sensitivity to avoid false positives (e.g. breathing with open mouth)
 export const MOUTH_DETECTION = {
-  JAW_OPEN_THRESHOLD: 0.25,
+  JAW_OPEN_THRESHOLD: 0.55,
   HISTORY_FRAMES: 15,
-  VARIANCE_THRESHOLD: 0.005,
-  SUSTAINED_MS: 2000,
-  LOG_COOLDOWN_MS: 15000,
+  VARIANCE_THRESHOLD: 0.04,
+  SUSTAINED_MS: 4000,
+  LOG_COOLDOWN_MS: 30000,
 };
 
 // ─── Face Event Logging ──────────────────────────────────────────────
 
 export const FACE_EVENT_LOG = {
-  COOLDOWN_MS: 10000,
+  COOLDOWN_MS: 20000,
 };
 
 // ─── Liveness Detection ──────────────────────────────────────────────────

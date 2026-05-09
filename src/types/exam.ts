@@ -53,6 +53,16 @@ export interface ExamTrackingConfig {
   device_lock_secret?: string;
 }
 
+export type WizardStep = "loading" | "info" | "camera" | "mediapipe" | "faceauth" | "liveness" | "dual_camera" | "environment";
+
+export interface EnvCheckItem {
+  key: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  status: "pending" | "checking" | "pass" | "fail";
+  detail?: string;
+}
+
 export interface ExamData {
   exam: {
     id: number;

@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import api from "@/lib/api";
+import { API_ENDPOINTS } from "@/config";
 
 interface FaceRegistrationModalProps {
   open: boolean;
@@ -33,8 +34,8 @@ export function FaceRegistrationModal({ open, onOpenChange, examId, attemptId }:
     setIsAutoLogin(false);
 
     const endpoint = examId && attemptId
-      ? `/student/exams/${examId}/take/${attemptId}/face-register-qr`
-      : `/student/face-register-qr`;
+      ? API_ENDPOINTS.EXAM_FACE_REGISTER_QR(examId, attemptId)
+      : API_ENDPOINTS.FACE_REGISTER_QR;
 
     api.post(endpoint)
       .then((res) => {

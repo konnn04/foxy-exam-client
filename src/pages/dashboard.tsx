@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import api from "@/lib/api";
+import { API_ENDPOINTS } from "@/config";
 import { useUser } from "@/hooks/use-user";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import {
@@ -142,7 +143,7 @@ export default function DashboardPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await api.get("/student/dashboard");
+        const res = await api.get(API_ENDPOINTS.DASHBOARD);
         setData(res.data);
       } catch {
         toast.error(t("dashboard.loadError"));

@@ -11,6 +11,7 @@ import {
   MEDIAPIPE_CONFIG,
 } from "@/config";
 import api from "@/lib/api";
+import { API_ENDPOINTS } from "@/config";
 import { useProctorStore } from "@/stores/use-proctor-store";
 import { telemetryPublisher } from "@/lib/telemetry-publisher";
 
@@ -34,10 +35,19 @@ export function useFaceMonitor(
   examId?: string,
   attemptId?: string,
   enableFaceCrop?: boolean,
+  /** Only run visual mouth detection when mic is enabled (config.requireMic). */
+  monitorMouth = false,
 ) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
-  const requestRef = useRef<number>(0);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const onFrameRenderRef = useRef(onFrameRender);
+  onFrameRenderRef.current = onFrameRender;
+  /** Keep monitorMouth stable via ref to avoid processFrame re-creation. */
+  const monitorMouthRef = useRef(monitorMouth);
+  monitorMouthRef.current = monitorMouth;
+  
   /** Avoid 60 RAF/s when throttled — schedule next infer tick with timeout instead. */
   const throttleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastVideoTimeRef = useRef<number>(-1);
@@ -117,16 +127,16 @@ export function useFaceMonitor(
   const processFrame = useCallback(() => {
     if (!active || !videoRef.current || !faceLandmarkerRef.current) return;
     const video = videoRef.current;
+    const onFrameRender = onFrameRenderRef.current;
 
     const now = performance.now();
     const minIv = MEDIAPIPE_CONFIG.FACE_GAZE_PROCESS_INTERVAL_MS;
     if (now - lastProcessTimeRef.current < minIv) {
-      const wait = Math.max(0, minIv - (now - lastProcessTimeRef.current));
-      if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current);
+      // Dùng setTimeout đơn giản thay vì RAF 60fps + setTimeout
       throttleTimerRef.current = setTimeout(() => {
         throttleTimerRef.current = null;
-        requestRef.current = requestAnimationFrame(processFrame);
-      }, wait);
+        processFrame();
+      }, minIv - (now - lastProcessTimeRef.current));
       return;
     }
     lastProcessTimeRef.current = now;
@@ -137,7 +147,23 @@ export function useFaceMonitor(
 
     if (video.videoWidth > 0 && video.currentTime !== lastVideoTimeRef.current) {
       lastVideoTimeRef.current = video.currentTime;
-      const results = faceLandmarkerRef.current.detectForVideo(video, performance.now());
+
+      // ── Downscale video → reusable canvas (tránh GC) ──
+      const scaleW = 320;
+      const scaleH = 240;
+      let canvas = canvasRef.current;
+      if (!canvas) {
+        canvas = document.createElement("canvas");
+        canvas.width = scaleW;
+        canvas.height = scaleH;
+        canvasRef.current = canvas;
+        ctxRef.current = canvas.getContext("2d", { willReadFrequently: false });
+      }
+      const ctx = ctxRef.current;
+      if (!ctx) return;
+      ctx.drawImage(video, 0, 0, scaleW, scaleH);
+      // detectForVideo nhận canvas và timestamp
+      const results = faceLandmarkerRef.current.detectForVideo(canvas, performance.now());
 
       if (results.faceLandmarks && results.faceLandmarks.length > 0) {
         const landmarks = results.faceLandmarks[0];
@@ -195,9 +221,9 @@ export function useFaceMonitor(
           }
         }
 
-        // ─── Mouth movement / talking detection ─────────────────────
+        // ─── Mouth movement / talking detection (only when mic enabled) ───
         let mouthTalking = false;
-        if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+        if (monitorMouthRef.current && results.faceBlendshapes && results.faceBlendshapes.length > 0) {
           const shapes = results.faceBlendshapes[0].categories;
           let jawOpen = 0;
           for (const shape of shapes) {
@@ -208,11 +234,11 @@ export function useFaceMonitor(
           history.push(jawOpen);
           if (history.length > MOUTH_DETECTION.HISTORY_FRAMES) history.shift();
 
-          if (jawOpen > MOUTH_DETECTION.JAW_OPEN_THRESHOLD && history.length >= 5) {
+          if (jawOpen > MOUTH_DETECTION.JAW_OPEN_THRESHOLD && history.length >= 10) {
             const mean = history.reduce((a, b) => a + b, 0) / history.length;
             const variance = history.reduce((a, b) => a + (b - mean) ** 2, 0) / history.length;
 
-            const sustainedOpen = jawOpen > (MOUTH_DETECTION.JAW_OPEN_THRESHOLD + 0.08);
+            const sustainedOpen = jawOpen > (MOUTH_DETECTION.JAW_OPEN_THRESHOLD + 0.15);
             if (variance > MOUTH_DETECTION.VARIANCE_THRESHOLD || sustainedOpen) {
               if (mouthTalkingStartRef.current === 0) {
                 mouthTalkingStartRef.current = now;
@@ -233,6 +259,8 @@ export function useFaceMonitor(
           } else {
             mouthTalkingStartRef.current = 0;
           }
+        } else {
+          mouthTalkingStartRef.current = 0;
         }
 
         // ─── Log face monitoring events via telemetry ─────────────
@@ -353,15 +381,19 @@ export function useFaceMonitor(
       }
     }
 
-    requestRef.current = requestAnimationFrame(processFrame);
+    // ── Schedule next frame with simple throttle (không dùng setTimeout(0) gây backpressure) ──
+    const nextDelay = minIv - (performance.now() - lastProcessTimeRef.current);
+    throttleTimerRef.current = setTimeout(() => {
+      throttleTimerRef.current = null;
+      processFrame();
+    }, Math.max(0, nextDelay));
   }, [active]);
 
   useEffect(() => {
     if (isLoaded && active) {
-      requestRef.current = requestAnimationFrame(processFrame);
+      setTimeout(processFrame, 0);
     }
     return () => {
-      cancelAnimationFrame(requestRef.current);
       if (throttleTimerRef.current) {
         clearTimeout(throttleTimerRef.current);
         throttleTimerRef.current = null;
@@ -405,7 +437,7 @@ export function useFaceMonitor(
       let nextMs = 3000 + Math.random() * 2000;
 
       try {
-        const res = await api.post(`/student/exams/${examId}/monitor/face-crop`, {
+        const res = await api.post(API_ENDPOINTS.EXAM_MONITOR_FACE_CROP(examId), {
           attempt_id: attemptId,
           image: base64Image,
         });

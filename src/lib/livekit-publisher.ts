@@ -1,3 +1,4 @@
+import { API_ENDPOINTS } from "@/config";
 /**
  * LiveKit Publisher Service - Publishes camera + screen tracks to a LiveKit room.
  *
@@ -22,7 +23,6 @@ export interface LiveKitPublisherConnectOptions {
 
 interface LiveKitPublisherConfig {
   examId: number;
-  /** After connect, one-shot poll until agent reports in-room (same attempt only once per session). */
   attemptId?: number;
   onConnectionChange?: (state: ConnectionState) => void;
   onError?: (error: string) => void;
@@ -33,13 +33,11 @@ class LiveKitPublisher {
   private examId: number = 0;
   private onConnectionChange?: (state: ConnectionState) => void;
   private onError?: (error: string) => void;
-  /** Coalesce concurrent connect() calls (e.g. React Strict Mode). */
   private connectMutex: Promise<boolean> | null = null;
-  /** Skip repeat agent-in-room polling after first success for this attempt. */
   private roomPresenceOk: { examId: number; attemptId: number } | null = null;
-  /** Avoid stacking duplicate camera/mic/screen publications when React effects re-run. */
   private lastCameraPublishSig: string | null = null;
   private lastScreenPublishSig: string | null = null;
+  // private connectAbortController: AbortController | null = null;
 
   private hasRoomPresenceOk(examId: number, attemptId: number): boolean {
     return (
@@ -53,28 +51,41 @@ class LiveKitPublisher {
     this.roomPresenceOk = { examId, attemptId };
   }
 
-  /**
-   * Poll until supervisor-agent refreshed Laravel cache for this room (no config/heartbeat spam).
-   */
   private async waitForSupervisorAgentInRoom(
     examId: number,
     attemptId: number,
     maxWaitMs = 180_000,
     pollMs = 2_500,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     const deadline = Date.now() + maxWaitMs;
     while (Date.now() < deadline) {
+      if (signal?.aborted) return false;
       try {
-        const res = await api.get(`/student/exams/${examId}/proctor/agent-in-room`, {
+        const res = await api.get(API_ENDPOINTS.EXAM_PROCTOR_AGENT_IN_ROOM(examId), {
           params: { attempt_id: attemptId },
+          signal,
         });
         if (res.data?.gating_disabled === true || res.data?.agent_in_room === true) {
           return true;
         }
-      } catch {
+      } catch (err: any) {
+        if (err.name === 'CanceledError' || err.code === 'ERR_CANCELED') return false;
         /* retry */
       }
-      await new Promise((r) => setTimeout(r, pollMs));
+      
+      if (signal?.aborted) return false;
+      
+      // Cancellable sleep
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, pollMs);
+        if (signal) {
+          signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            resolve();
+          }, { once: true });
+        }
+      });
     }
     return false;
   }
@@ -133,13 +144,13 @@ class LiveKitPublisher {
         return false;
       }
 
-      const res = await api.get(`/student/exams/${this.examId}/proctor/token`, {
+      const res = await api.get(API_ENDPOINTS.EXAM_PROCTOR_TOKEN(this.examId), {
         params: { attempt_id: config.attemptId },
       });
       const { token, ws_url } = res.data;
 
       this.room = new Room({
-        adaptiveStream: true,
+        adaptiveStream: false,
         dynacast: true,
       });
 
@@ -154,7 +165,7 @@ class LiveKitPublisher {
       });
 
       await this.room.connect(ws_url, token);
-      console.log("[LiveKitPublisher] Connected to LiveKit room");
+      console.log("[LiveKitPublisher] Connected to LiveKit room:", this.room.name, "as", this.room.localParticipant?.identity);
       this.startProctorCommandListener();
 
       if (
@@ -186,29 +197,39 @@ class LiveKitPublisher {
     return this.ensureConnected(config, { requireSupervisorAgent: true });
   }
 
-  /**
-   * After the phone participant (identity ending with `-mobile`) publishes camera video, build a local MediaStream
-   * for MediaPipe / preview (desktop does not republish this video).
-   */
   async waitForMobileRelayCameraMediaStream(timeoutMs = 120_000): Promise<MediaStream | null> {
     const room = this.room;
     if (!room || room.state !== ConnectionState.Connected) {
-      console.warn("[LiveKitPublisher] waitForMobileRelayCameraMediaStream: not connected");
+      console.warn("[LiveKitPublisher] waitForMobileRelay: room not connected, state =", room?.state);
       return null;
     }
 
+    console.log("[LiveKitPublisher] waitForMobileRelay: starting, room =", room.name, ", timeout =", timeoutMs);
+
     const pickMobileCameraStream = (): MediaStream | null => {
+      console.log("[LiveKitPublisher] pickMobile: remoteParticipants =", room.remoteParticipants.size);
       for (const p of room.remoteParticipants.values()) {
         if (!p.identity?.endsWith("-mobile")) continue;
+
+        console.log(`[LiveKitPublisher] pickMobile: found mobile participant "${p.identity}", tracks = ${p.trackPublications.size}`);
+
         for (const pub of p.trackPublications.values()) {
-          if (
-            pub.source === Track.Source.Camera &&
-            pub.kind === Track.Kind.Video &&
-            pub.isSubscribed &&
-            pub.track
-          ) {
+          const info = `sid=${pub.trackSid} source=${pub.source} kind=${pub.kind} subscribed=${pub.isSubscribed} hasTrack=${!!pub.track}`;
+          console.log(`[LiveKitPublisher] pickMobile:   pub ${info}`);
+
+          // Force-subscribe if the server didn't auto-subscribe
+          if (!pub.isSubscribed) {
+            console.log("[LiveKitPublisher] pickMobile:   -> forcing subscribe");
+            pub.setSubscribed(true);
+            // track won't be available until TrackSubscribed fires – fall through
+          }
+
+          // Accept any video track from the mobile participant
+          if (pub.kind === Track.Kind.Video && pub.track) {
             const mst = pub.track.mediaStreamTrack;
+            console.log("[LiveKitPublisher] pickMobile:   -> track readyState =", mst?.readyState);
             if (mst && mst.readyState !== "ended") {
+              console.log("[LiveKitPublisher] pickMobile:   -> ✅ FOUND VALID MOBILE STREAM");
               return new MediaStream([mst]);
             }
           }
@@ -217,35 +238,45 @@ class LiveKitPublisher {
       return null;
     };
 
+    // ── Immediate check ──
     const immediate = pickMobileCameraStream();
     if (immediate) return immediate;
 
-    return new Promise((resolve) => {
+    // ── Async wait: events + periodic poll ──
+    return new Promise<MediaStream | null>((resolve) => {
       let settled = false;
+      let pollInterval: ReturnType<typeof setInterval> | null = null;
+
       const finish = (ms: MediaStream | null) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        room.off(RoomEvent.TrackSubscribed, onTrack);
-        room.off(RoomEvent.ParticipantConnected, onPart);
-        room.off(RoomEvent.TrackPublished, onPublished);
+        if (pollInterval) clearInterval(pollInterval);
+        room.off(RoomEvent.TrackSubscribed, onEvent);
+        room.off(RoomEvent.ParticipantConnected, onEvent);
+        room.off(RoomEvent.TrackPublished, onEvent);
         resolve(ms);
       };
 
-      const timer = window.setTimeout(() => finish(null), timeoutMs);
+      const timer = window.setTimeout(() => {
+        console.warn("[LiveKitPublisher] waitForMobileRelay: TIMEOUT after", timeoutMs, "ms");
+        finish(null);
+      }, timeoutMs);
 
       const tryPick = () => {
+        if (settled) return;
         const ms = pickMobileCameraStream();
         if (ms) finish(ms);
       };
 
-      const onTrack = () => tryPick();
-      const onPart = () => tryPick();
-      const onPublished = () => tryPick();
+      const onEvent = () => tryPick();
 
-      room.on(RoomEvent.TrackSubscribed, onTrack);
-      room.on(RoomEvent.ParticipantConnected, onPart);
-      room.on(RoomEvent.TrackPublished, onPublished);
+      room.on(RoomEvent.TrackSubscribed, onEvent);
+      room.on(RoomEvent.ParticipantConnected, onEvent);
+      room.on(RoomEvent.TrackPublished, onEvent);
+
+      // Safety-net: poll every 1.5 s in case events are missed
+      pollInterval = setInterval(tryPick, 1500);
     });
   }
 
@@ -296,8 +327,19 @@ class LiveKitPublisher {
       const videoTracks = includeVideo ? stream.getVideoTracks() : [];
       const audioTracks = includeAudio ? stream.getAudioTracks() : [];
 
+      console.log(
+        `[LiveKitPublisher] publishCamera: includeVideo=${includeVideo} includeAudio=${includeAudio} ` +
+        `vidTracks=${videoTracks.length} audTracks=${audioTracks.length} ` +
+        `vidStates=${videoTracks.map(t => t.readyState).join(',')} ` +
+        `audStates=${audioTracks.map(t => t.readyState).join(',')}`
+      );
+
       for (const track of videoTracks) {
-        const pub = await this.room.localParticipant.publishTrack(track, {
+        if (track.readyState === 'ended') {
+          console.warn('[LiveKitPublisher] publishCamera: video track already ended, skipping');
+          continue;
+        }
+        const pub = await this.room!.localParticipant.publishTrack(track, {
           source: Track.Source.Camera,
           name: "camera",
         });
@@ -305,7 +347,7 @@ class LiveKitPublisher {
       }
 
       for (const track of audioTracks) {
-        const pub = await this.room.localParticipant.publishTrack(track, {
+        const pub = await this.room!.localParticipant.publishTrack(track, {
           source: Track.Source.Microphone,
           name: "microphone",
         });
@@ -355,8 +397,17 @@ class LiveKitPublisher {
     try {
       const videoTracks = stream.getVideoTracks();
 
+      console.log(
+        `[LiveKitPublisher] publishScreen: vidTracks=${videoTracks.length} ` +
+        `vidStates=${videoTracks.map(t => t.readyState).join(',')}`
+      );
+
       for (const track of videoTracks) {
-        const pub = await this.room.localParticipant.publishTrack(track, {
+        if (track.readyState === 'ended') {
+          console.warn('[LiveKitPublisher] publishScreen: video track already ended, skipping');
+          continue;
+        }
+        const pub = await this.room!.localParticipant.publishTrack(track, {
           source: Track.Source.ScreenShare,
           name: "screen",
         });
@@ -373,11 +424,6 @@ class LiveKitPublisher {
     return publications;
   }
 
-  /**
-   * Ask the supervisor-agent (subscribed to the same room) to capture LiveKit frames
-   * and attach them to an existing violation via exam-sys internal API.
-   * Used when the client does not upload snapshot_cam/snapshot_screen (lockdown path).
-   */
   async requestAgentSnapshots(
     violationId: number,
     examId: number,
@@ -409,7 +455,6 @@ class LiveKitPublisher {
     if (await publishOnce()) {
       return;
     }
-    // Fewer retries — long loops kept the tab busy when many violations fired in sequence.
     for (let i = 0; i < 5; i++) {
       await new Promise((r) => setTimeout(r, 400));
       if (await publishOnce()) {
@@ -421,10 +466,7 @@ class LiveKitPublisher {
     );
   }
 
-  /**
-   * Publish telemetry data to the supervisor-agent via DataChannel.
-   * Used by TelemetryPublisher to send raw client events.
-   */
+
   async publishTelemetry(data: Uint8Array, topic: string): Promise<void> {
     if (!this.room || this.room.state !== ConnectionState.Connected) {
       throw new Error("Not connected to LiveKit room");
@@ -437,10 +479,7 @@ class LiveKitPublisher {
 
   private proctorCommandListenerActive = false;
 
-  /**
-   * Start listening for proctor commands via LiveKit data channel.
-   * Handles: request_process_list, kill_process
-   */
+
   startProctorCommandListener(): void {
     if (this.proctorCommandListenerActive || !this.room) return;
     this.proctorCommandListenerActive = true;
@@ -471,6 +510,10 @@ class LiveKitPublisher {
           msg.pid as number,
           msg.name as string,
         );
+      } else if (msg.type === "request_mobile_face_check") {
+        window.dispatchEvent(new CustomEvent("exam:mobile_face_check"));
+      } else if (msg.type === "mobile_face_check_done") {
+        window.dispatchEvent(new CustomEvent("exam:mobile_face_check_done"));
       }
     };
 
@@ -558,13 +601,10 @@ class LiveKitPublisher {
     console.log("[LiveKitPublisher] Disconnected");
   }
 
-  /**
-   * Check if connected to the room.
-   */
+
   get isConnected(): boolean {
     return this.room?.state === ConnectionState.Connected;
   }
 }
 
-// Singleton export
 export const livekitPublisher = new LiveKitPublisher();
