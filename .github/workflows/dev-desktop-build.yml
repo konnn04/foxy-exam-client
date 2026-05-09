@@ -65,6 +65,8 @@ jobs:
 
       - name: Build (Vite development mode)
         run: pnpm run build:dev
+        env:
+          INTEGRITY_SECRET: ${{ secrets.INTEGRITY_SECRET }}
 
       - name: Package Electron (current OS)
         shell: bash

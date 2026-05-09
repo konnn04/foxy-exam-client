@@ -52,6 +52,8 @@ jobs:
 
       - name: Build Web and Electron Assets
         run: pnpm run build
+        env:
+          INTEGRITY_SECRET: ${{ secrets.INTEGRITY_SECRET }}
 
       - name: Build and Publish Electron App
         run: pnpm exec electron-builder --publish always
