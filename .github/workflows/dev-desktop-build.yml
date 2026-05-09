@@ -95,7 +95,7 @@ jobs:
             exit 1
           fi
           set -e
-          openssl pkcs12 -in signing.pfx -nokeys -passin pass:"$CSC_KEY_PASSWORD" -noout >/dev/null 2>&1
+          openssl pkcs12 -in signing.pfx -nokeys -passin pass:"$CSC_KEY_PASSWORD" -noout >/dev/null
           echo "Signing certificate validated."
 
       - name: Validate signing certificate (Windows)
