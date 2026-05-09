@@ -75,6 +75,46 @@ jobs:
           printf "%s" "${{ secrets.CODE_SIGNING_CERT }}" | base64 --decode > signing.pfx
           echo "CSC_LINK=$PWD/signing.pfx" >> $GITHUB_ENV
 
+      - name: Ensure GH token for publishing
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.RELEASE_GH_TOKEN }}" ]; then
+            echo "Using RELEASE_GH_TOKEN secret for GitHub publishing"
+            echo "GH_TOKEN=${{ secrets.RELEASE_GH_TOKEN }}" >> $GITHUB_ENV
+          else
+            echo "Falling back to workflow GITHUB_TOKEN for publishing (may be limited)."
+            echo "GH_TOKEN=${{ secrets.GITHUB_TOKEN }}" >> $GITHUB_ENV
+            echo "If release creation fails with 403, create a Personal Access Token (repo scope) and set it as secret RELEASE_GH_TOKEN." >&2
+          fi
+
+      - name: Validate signing certificate (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CSC_KEY_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
+        run: |
+          if ! command -v openssl >/dev/null 2>&1; then
+            echo "openssl not found; cannot validate signing certificate." >&2
+            exit 0
+          fi
+          set -e
+          openssl pkcs12 -in signing.pfx -nokeys -passin pass:"$CSC_KEY_PASSWORD" -info >/dev/null
+          echo "Signing certificate validated."
+
+      - name: Validate signing certificate (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          CSC_KEY_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
+        run: |
+          try {
+            certutil -p $env:CSC_KEY_PASSWORD -dump signing.pfx | Out-Null
+            Write-Output "Signing certificate validated."
+          } catch {
+            Write-Error "Failed to validate signing.pfx on Windows. Ensure CODE_SIGNING_CERT and CODE_SIGNING_PASSWORD are correct."
+            exit 1
+          }
+
       - name: Build and Publish Electron App
         run: pnpm exec electron-builder --publish always
         env:
