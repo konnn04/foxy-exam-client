@@ -1,7 +1,3 @@
-# Branch push: sync remote → semver bump → commit/tag/push (GITHUB_TOKEN does not fire
-# follow-up workflows) → publish Electron in the same run via workflow_call.
-# Tag push / workflow_dispatch: publish only (e.g. manual tag or PAT-triggered tag builds).
-
 name: Release Electron App
 
 on:
