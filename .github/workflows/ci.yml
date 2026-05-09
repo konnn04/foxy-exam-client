@@ -1,5 +1,3 @@
-# Submodule repo root. Lint + build only — versioning & Electron live in release.yml.
-
 name: CI
 
 on:
