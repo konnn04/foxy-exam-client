@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
 import { Button } from "@/components/ui/button";
-import { Video, VideoOff, Minimize2, Maximize2, ScanFace } from "lucide-react";
+import { Video, VideoOff, Minimize2, ScanFace } from "lucide-react";
 import type { FaceLandmarkerResult } from "@mediapipe/tasks-vision";
 import { DrawingUtils, FaceLandmarker } from "@mediapipe/tasks-vision";
 import { extractPitchYaw } from "@/lib/mediapipe-service";

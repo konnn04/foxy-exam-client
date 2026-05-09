@@ -15,18 +15,13 @@ interface SpotCheckOverlayProps {
 type Phase = "idle" | "active" | "success" | "failed";
 
 export function DualCameraSpotCheckOverlay({
-  examId,
-  attemptId,
   enabled,
-  minIntervalSec = 60,
-  maxIntervalSec = 300,
   timeoutSec = 10,
 }: SpotCheckOverlayProps) {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>("idle");
   const [countdown, setCountdown] = useState(timeoutSec);
   const phaseRef = useRef<Phase>("idle");
-  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     if (!enabled) return;
