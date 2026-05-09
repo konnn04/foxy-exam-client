@@ -5,6 +5,9 @@
 
 // ─── MediaPipe Models Configuration ──────────────────────────────────────
 
+/** Max camera capture FPS (getUserMedia + LiveKit encode). Lower = less CPU / bandwidth. */
+export const CAMERA_CAPTURE_MAX_FPS = 10;
+
 export const MEDIAPIPE_CONFIG = {
   // WASM module URL
   WASM_URL: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm",
@@ -15,6 +18,12 @@ export const MEDIAPIPE_CONFIG = {
 
   // Target interval between frames (~12 fps)
   TARGET_INTERVAL_MS: 80,
+
+  /**
+   * Exam-session gaze: min ms between FaceLandmarker runs. Higher = less CPU & UI lag;
+   * lower = snappier warnings (was effectively ~200ms inline; default 450ms ≈ 2.2 fps).
+   */
+  FACE_GAZE_PROCESS_INTERVAL_MS: 450,
 };
 
 // ─── Face Centering & Orientation Thresholds ────────────────────────────
@@ -73,19 +82,19 @@ export const MONITORING_THRESHOLDS = {
 };
 
 // ─── Mouth / Talking Detection ──────────────────────────────────────
-
+// Reduced sensitivity to avoid false positives (e.g. breathing with open mouth)
 export const MOUTH_DETECTION = {
-  JAW_OPEN_THRESHOLD: 0.25,
+  JAW_OPEN_THRESHOLD: 0.55,
   HISTORY_FRAMES: 15,
-  VARIANCE_THRESHOLD: 0.005,
-  SUSTAINED_MS: 2000,
-  LOG_COOLDOWN_MS: 15000,
+  VARIANCE_THRESHOLD: 0.04,
+  SUSTAINED_MS: 4000,
+  LOG_COOLDOWN_MS: 30000,
 };
 
 // ─── Face Event Logging ──────────────────────────────────────────────
 
 export const FACE_EVENT_LOG = {
-  COOLDOWN_MS: 10000,
+  COOLDOWN_MS: 20000,
 };
 
 // ─── Liveness Detection ──────────────────────────────────────────────────

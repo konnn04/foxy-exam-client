@@ -41,6 +41,7 @@ export interface ExamTrackingConfig {
   monitorGaze?: boolean;
   requireMic?: boolean;
   requireFaceAuth?: boolean;
+  requireDualCamera?: boolean;
   detectBannedApps?: boolean;
   detectBannedObjects?: boolean;
   bannedApps?: string[];
@@ -50,6 +51,16 @@ export interface ExamTrackingConfig {
   face_verification_interval_seconds?: number;
   lockDevice?: boolean;
   device_lock_secret?: string;
+}
+
+export type WizardStep = "loading" | "info" | "camera" | "mediapipe" | "faceauth" | "liveness" | "dual_camera" | "environment";
+
+export interface EnvCheckItem {
+  key: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  status: "pending" | "checking" | "pass" | "fail";
+  detail?: string;
 }
 
 export interface ExamData {

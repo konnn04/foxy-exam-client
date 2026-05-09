@@ -6,177 +6,77 @@
 ![Vite](https://img.shields.io/badge/Vite-6-646CFF?style=for-the-badge&logo=vite&logoColor=white)
 ![Tailwind](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
 
-Ứng dụng desktop cho thí sinh thi trực tuyến. Tích hợp lockdown browser, telemetry engine, camera/screen stream qua LiveKit, phát hiện AI local (MediaPipe), và giao diện làm bài.
+Ứng dụng desktop cho thí sinh thi trực tuyến. Tích hợp lockdown browser, telemetry engine, camera/screen stream qua LiveKit, phát hiện AI local (MediaPipe), và giao diện làm bài thi.
 
-## Features
+## Visuals
+*(TBD: Thêm ảnh chụp màn hình lúc thí sinh đang làm bài và bị khóa màn hình tại đây)*
 
-### Exam Lockdown
-- Chế độ kiosk/fullscreen bắt buộc khi thi
-- Chặn phím tắt hệ thống (Alt+Tab, Alt+F4, Cmd+Q, PrintScreen...)
-- Phát hiện và cảnh báo ứng dụng cấm đang chạy (banned apps)
-- Phát hiện máy ảo (VMware, VirtualBox, Hyper-V, QEMU, KVM...)
-- Thu thập device fingerprint & peripheral monitoring
+## Description
 
-### Telemetry Engine
-- Ghi nhận sự kiện: focus/blur, clipboard, resize, keyboard shortcuts
-- Gửi perf_metrics định kỳ (CPU, RAM, GPU, app CPU, app RAM)
-- Device snapshot: liệt kê thiết bị ngoại vi USB
-- Process monitoring: danh sách tiến trình kèm owner (user/system)
+**exam-client** chịu trách nhiệm tạo ra một môi trường thi an toàn và chống gian lận ở cấp độ máy trạm (client-side):
 
-### LiveKit Integration
-- Publish camera + screen share track qua WebRTC
-- Auto-reconnect khi mất kết nối
-- Stream quality adaptive
+- **Exam Lockdown:** Chế độ kiosk toàn màn hình, chặn phím tắt hệ thống (Alt+Tab, PrintScreen, etc.), phát hiện máy ảo (VMware, VirtualBox, etc.), phát hiện và diệt phần mềm bị cấm (banned apps).
+- **Telemetry Engine:** Thu thập thiết bị ngoại vi USB, giám sát process, đo hiệu năng (CPU/RAM/GPU), theo dõi Focus/Blur.
+- **AI Local:** Tích hợp MediaPipe Vision để phát hiện khuôn mặt và theo dõi ánh mắt (gaze tracking) trực tiếp trên trình duyệt, giảm tải cho server.
+- **LiveKit Stream:** Chia sẻ đồng thời luồng WebRTC của Camera và Screen Capture.
+- **Cross-platform:** Hỗ trợ IPC module riêng cho Windows, macOS, và Linux.
 
-### AI Local (Browser)
-- MediaPipe Face Detection: phát hiện khuôn mặt phía client
-- TensorFlow.js: gaze tracking, emotion analysis (optional)
-
-### Cross-platform
-- Windows (NSIS installer)
-- macOS (DMG)
-- Linux (AppImage, deb)
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| Shell | Electron 35 |
-| UI | React 19 + TypeScript + Vite 6 |
-| Styling | Tailwind CSS 4 + Shadcn UI |
-| WebRTC | LiveKit Client SDK |
-| WebSocket | Laravel Echo + Pusher protocol |
-| AI | MediaPipe Vision, TensorFlow.js |
-| Build | electron-builder |
-| Monitoring | Sentry |
-
-## Quick Start
+## Installation
 
 ### Prerequisites
 - Node.js 18+ (khuyến nghị 20+)
 - pnpm 9+
 
-### Development
-
+### Setup Development Environment
 ```bash
 cd exam-client
 pnpm install
 
-# Configure environment
 cp src/.env.example src/.env
 # Edit: VITE_API_BASE_URL, VITE_REVERB_*, VITE_LIVEKIT_URL
+```
 
-# Run in development mode (Vite + Electron)
+## Usage
+
+### Development Mode
+```bash
+# Run Vite dev server + Electron wrapper
 pnpm run dev
 ```
 
-### Build
-
+### Build & Release
 ```bash
 # Build for current OS
 pnpm run build:electron
 
-# Build for specific OS
+# Build for specific OS platforms
 pnpm run release:linux    # AppImage + deb
 pnpm run release:win      # NSIS installer (x64)
-pnpm run release:local    # Current OS, no publish
+pnpm run release:local    # Build for current OS without publishing
 ```
+Sản phẩm build sẽ nằm ở thư mục `release/{version}/`.
 
-Output: `release/{version}/`
+### Security Policy
+Ứng dụng áp dụng chính sách:
+- Content Security Policy (CSP) chặt chẽ.
+- `nodeIntegration: false` và `contextIsolation: true`.
+- Giao tiếp giữa React và hệ điều hành chỉ thông qua `contextBridge` IPC (Preload script).
 
-## Project Structure
+## Support
+Tạo Issue trên kho lưu trữ chính [foxy-exam](https://github.com/konnn04/foxy-exam) nếu gặp vấn đề về phần mềm (crash, không nhận diện được camera).
 
-```
-exam-client/
-├── electron/
-│   ├── main.ts              # Electron main process entry
-│   ├── main-window.ts       # BrowserWindow setup (kiosk, security)
-│   ├── preload.ts           # Context bridge (IPC expose)
-│   ├── ipc-handlers.ts      # IPC handler registration (process, VM, screenshot...)
-│   ├── ipc-exam-session.ts  # Exam session lifecycle IPC
-│   ├── security.ts          # Security policies (CSP, keyboard intercept)
-│   ├── runtime.ts           # Runtime config resolution
-│   ├── diagnostic-log.ts    # Diagnostic logging for production
-│   ├── peripheral-monitor.ts # USB device monitoring
-│   ├── platform/
-│   │   ├── platform-ops.ts  # IPlatformOps interface
-│   │   ├── windows-ops.ts   # Windows-specific implementations
-│   │   ├── darwin-ops.ts    # macOS-specific implementations
-│   │   ├── linux-ops.ts     # Linux-specific implementations
-│   │   └── index.ts         # Platform factory (getPlatformOps)
-│   ├── banned-process-match.ts
-│   ├── safe-banned-kill.ts
-│   ├── unix-kill-pattern.ts
-│   └── sentry-main.ts
-├── src/
-│   ├── main.tsx             # React entry point
-│   ├── App.tsx              # Router + providers
-│   ├── config/
-│   │   └── runtime-shared.ts # Shared runtime config
-│   ├── components/
-│   │   ├── exam/            # Exam-specific components
-│   │   └── ui/              # Shadcn UI components
-│   ├── hooks/               # Custom React hooks
-│   ├── services/
-│   │   ├── telemetry-engine.ts    # Client telemetry system
-│   │   └── livekit-publisher.ts   # LiveKit stream management
-│   ├── .env.example
-│   └── .env
-├── public/
-│   └── assets/icons/        # App icons (ico, icns, png)
-├── scripts/                 # Build helper scripts
-├── .github/workflows/       # CI/CD (electron-publish-matrix)
-├── package.json
-├── vite.config.ts
-└── tsconfig.json
-```
+## Roadmap
+Phát triển thêm module cảnh báo mạng yếu và tích hợp Offline Mode caching cho các bài thi dài. Chi tiết tại `ARCHITECTURE.md`.
 
-## Platform Architecture
+## Contributing
+Mọi đóng góp nhằm hỗ trợ tính tương thích nền tảng (Platform support cho Linux distro lạ hoặc macOS ARM) đều được hoan nghênh.
 
-IPC handlers sử dụng **interface pattern** cho cross-platform support:
+## Authors and acknowledgment
+**Konnn04** 
+Đồ án Tốt nghiệp - Đại học Cần Thơ (CTU).
 
-```
-IPlatformOps (interface)
-├── WindowsOps  — tasklist, WMI, PowerShell
-├── DarwinOps   — ps, sysctl, system_profiler
-└── LinuxOps    — ps, systemd-detect-virt, lsusb
-```
+## License
+Tài liệu và mã nguồn phục vụ giáo dục, thuộc bản quyền phát triển Đồ án CTU.
 
-Mỗi class implement các phương thức:
-- `getProcessListCommand()` — Lệnh lấy danh sách process
-- `parseProcessList(stdout)` — Parse output thành `ProcessInfo[]`
-- `getBannedAppsCommand()` — Lệnh kiểm tra ứng dụng cấm
-- `detectVirtualMachine()` — Phát hiện VM
-- `killProcessByPid(pid, name)` — Kill process cấm
-
-## Environment Variables
-
-| Variable | Example | Description |
-|----------|---------|-------------|
-| `VITE_API_BASE_URL` | `https://exam-local.konnn04.dev` | Backend API base URL |
-| `VITE_REVERB_HOST` | `ws-exam-local.konnn04.dev` | WebSocket host |
-| `VITE_REVERB_PORT` | `443` | WebSocket port |
-| `VITE_REVERB_SCHEME` | `https` | WebSocket protocol |
-| `VITE_REVERB_APP_KEY` | `exam-key-local` | Reverb app key |
-| `VITE_LIVEKIT_URL` | `wss://...` | LiveKit server URL |
-| `SENTRY_DSN` | `https://...@sentry.io/...` | Sentry error tracking |
-| `SENTRY_TRACES_SAMPLE_RATE` | `0.1` | Performance sampling (0-1) |
-
-## CI/CD
-
-GitHub Actions workflow (`electron-publish-matrix.yml`):
-- Build trên matrix: Windows (x64), Linux (x64), macOS (arm64 + x64)
-- Auto-publish GitHub Release (draft)
-- Artifact upload per platform
-
-## Security
-
-- Content Security Policy (CSP) strict
-- `nodeIntegration: false`, `contextIsolation: true`
-- IPC via `contextBridge` only (preload script)
-- Keyboard shortcut interception trong exam mode
-- Process isolation: renderer process sandboxed
-
-## Author
-
-**Konnn04** — Foxy Exam Client
+## Project status
+Đang phát triển / Bảo trì. Hỗ trợ đầy đủ Windows và Linux (Debian-based).

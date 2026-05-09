@@ -32,7 +32,7 @@ async function createNewFaceLandmarker(opts?: FaceLandmarkerOpts): Promise<FaceL
   return FaceLandmarker.createFromOptions(filesetResolver, {
     baseOptions: {
       modelAssetPath: FACE_LANDMARKER_MODEL_URL,
-      delegate: "GPU",
+      delegate: "CPU",
     },
     outputFaceBlendshapes: opts?.blendshapes ?? false,
     outputFacialTransformationMatrixes: true,

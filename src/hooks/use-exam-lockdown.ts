@@ -57,6 +57,8 @@ export function useExamLockdown({
   const vmCheckDoneRef = useRef(false);
   /** Native Electron fullscreen lost (document.fullscreenElement stays null). */
   const nativeWindowFsLostRef = useRef(false);
+  /** User requested no continuous perf/process telemetry during exam. */
+  const PERF_CONTINUOUS_MONITORING = false;
 
   // FPS Counter removed to save CPU
 
@@ -219,15 +221,12 @@ export function useExamLockdown({
         button: e.button,
       });
 
-      // Visual click ripple for recording
       const ripple = document.createElement("div");
       ripple.className = "click-ripple";
       ripple.style.left = `${e.clientX}px`;
       ripple.style.top = `${e.clientY}px`;
       document.body.appendChild(ripple);
-      setTimeout(() => {
-        ripple.remove();
-      }, 600);
+      setTimeout(() => ripple.remove(), 600);
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -434,20 +433,17 @@ export function useExamLockdown({
             }
           }
 
-          // ─── Process list (diff-based) ─────────────────────
-          if (window.electronAPI.getProcessList) {
+          if (PERF_CONTINUOUS_MONITORING && window.electronAPI.getProcessList) {
             const processes: any[] = await window.electronAPI.getProcessList();
             const currentNames = new Set(processes.map((p: any) => p.name));
 
             if (isFirstProcessSnapshotRef.current) {
-              // First snapshot — send full list
               telemetryPublisher.emit("process_snapshot", {
                 action: "full",
                 processes: processes.map((p: any) => ({ name: p.name, pid: p.pid })),
               });
               isFirstProcessSnapshotRef.current = false;
             } else {
-              // Diff: find started and stopped
               const started = [...currentNames].filter((n) => !lastProcessListRef.current.has(n));
               const stopped = [...lastProcessListRef.current].filter((n) => !currentNames.has(n));
               if (started.length > 0 || stopped.length > 0) {
@@ -483,9 +479,9 @@ export function useExamLockdown({
       lastMetricsTimeRef.current = performance.now();
     }, 5000); // Every 5s for process and hardware
 
-    // ─── System metrics (CPU/RAM) — every 2s ───────────────
+    // ─── System metrics (CPU/RAM) — disabled continuously, send summary on cleanup only
     let perfInterval: ReturnType<typeof setInterval> | null = null;
-    if (window.electronAPI?.getSystemMetrics) {
+    if (PERF_CONTINUOUS_MONITORING && window.electronAPI?.getSystemMetrics) {
       perfInterval = setInterval(async () => {
         try {
           const metrics = await window.electronAPI!.getSystemMetrics!();
@@ -496,12 +492,32 @@ export function useExamLockdown({
         } catch {
           /* ignore */
         }
-      }, 2000);
+      }, 5000);
     }
 
     return () => {
       clearInterval(monitorInterval);
       if (perfInterval) clearInterval(perfInterval);
+      // Final summary snapshot (requested: no continuous performance monitoring).
+      if (window.electronAPI?.getSystemMetrics) {
+        window.electronAPI.getSystemMetrics().then((metrics: any) => {
+          telemetryPublisher.emit("perf_metrics", {
+            ...metrics,
+            fps: fpsRef.current,
+            summary: true,
+            scope: "exam_end",
+          });
+        }).catch(() => {});
+      }
+      if (window.electronAPI?.getProcessList) {
+        window.electronAPI.getProcessList().then((processes: any[]) => {
+          telemetryPublisher.emit("process_snapshot", {
+            action: "final",
+            scope: "exam_end",
+            processes: (processes || []).map((p: any) => ({ name: p.name, pid: p.pid })),
+          });
+        }).catch(() => {});
+      }
     };
   }, [wizardPhase, config, examId, setIsBlurred, setBlurReason, toast]);
 

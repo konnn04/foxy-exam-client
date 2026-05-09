@@ -1,12 +1,6 @@
-/**
- * API Configuration
- * Centralized API endpoints, base URLs, and HTTP configuration
- */
-
-// Base URLs
 export const API_CONFIG = {
   // API Base URL
-  BASE_URL: `${import.meta.env.VITE_BASE_URL}/api` || "http://localhost:8000/api",
+  BASE_URL: import.meta.env.VITE_BASE_URL ? `${import.meta.env.VITE_BASE_URL}/api` : "http://localhost:8000/api",
 
   // Broadcasting/WebSocket Auth — can be overridden to bypass tunnel
   BROADCASTING_AUTH_URL: import.meta.env.VITE_BROADCASTING_AUTH_URL
@@ -35,20 +29,47 @@ export const API_ENDPOINTS = {
   AUTH_ME: "/auth/me",
   AUTH_LOGOUT: "/auth/logout",
 
-  // Dashboard
+  // Dashboard & Profile
   DASHBOARD: "/student/dashboard",
+  HISTORY: "/student/history",
 
-  // Exams
-  EXAM_TAKE: (examId: string, attemptId: string) => `/student/exams/${examId}/take/${attemptId}`,
-  EXAM_MONITOR_EVENTS: (examId: string) => `/student/exams/${examId}/monitor/events`,
+  // Courses
+  COURSES: "/student/courses",
+  COURSE_DETAIL: (courseId: string | number) => `/student/courses/${courseId}`,
+
+  // Face Registration
+  FACE_REGISTER_QR: "/student/face-register-qr",
+  EXAM_FACE_REGISTER_QR: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/take/${attemptId}/face-register-qr`,
+  EXAM_VERIFY_IDENTITY: (examId: string | number) => `/student/exams/${examId}/verify-identity`,
+
+  // Exams Basic
+  EXAM_DETAIL: (examId: string | number) => `/student/exams/${examId}`,
+  EXAM_START: (examId: string | number) => `/student/exams/${examId}/start`,
+  EXAM_REVIEW: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/review/${attemptId}`,
+  EXAM_SUBMIT: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/submit/${attemptId}`,
+
+  // Exam Taking
+  EXAM_TAKE: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/take/${attemptId}`,
+  EXAM_TAKE_BEGIN: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/take/${attemptId}/begin`,
+  EXAM_TAKE_STATUS: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/attempt/${attemptId}/status`,
+  EXAM_SAVE_ANSWER: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/take/${attemptId}/save-answer`,
+  EXAM_FLAG_ANSWER: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/take/${attemptId}/flag`,
+
+  // Mobile Camera Check
+  MOBILE_CAMERA_TOKEN: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/take/${attemptId}/mobile-camera-token`,
+  MOBILE_CAMERA_RELAY_STATUS: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/take/${attemptId}/mobile-camera-relay-status`,
+
+  // Proctoring & Monitoring
+  EXAM_MONITOR_EVENTS: (examId: string | number) => `/student/exams/${examId}/monitor/events`,
   EXAM_MONITOR_SIGNAL: (examId: string | number) => `/student/exams/${examId}/monitor/signal`,
   EXAM_MONITOR_FACE_CROP: (examId: string | number) => `/student/exams/${examId}/monitor/face-crop`,
   EXAM_MONITOR_AUDIO_CLIP: (examId: string | number) => `/student/exams/${examId}/monitor/audio-clip`,
   EXAM_MONITOR_SCREEN_CLIP: (examId: string | number) => `/student/exams/${examId}/monitor/screen-clip`,
   EXAM_PROCTOR_VIOLATIONS: (examId: string | number) => `/student/exams/${examId}/proctor/violations`,
   EXAM_PROCTOR_CONFIG: (examId: string | number) => `/student/exams/${examId}/proctor/config`,
+  EXAM_PROCTOR_TOKEN: (examId: string | number) => `/student/exams/${examId}/proctor/token`,
+  EXAM_PROCTOR_AGENT_IN_ROOM: (examId: string | number) => `/student/exams/${examId}/proctor/agent-in-room`,
 
-  // Chat
   EXAM_CHAT: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/chat/${attemptId}`,
 };
 

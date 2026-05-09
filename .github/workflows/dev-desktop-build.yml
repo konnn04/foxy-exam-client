@@ -65,12 +65,35 @@ jobs:
 
       - name: Build (Vite development mode)
         run: pnpm run build:dev
+        env:
+          INTEGRITY_SECRET: ${{ secrets.INTEGRITY_SECRET }}
 
       - name: Package Electron (current OS)
         shell: bash
         run: pnpm exec electron-builder --publish never '-c.productName=Foxy Exam (Dev)'
         env:
+          CSC_KEY_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Decode CODE_SIGNING_CERT (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $cert = "${{ secrets.CODE_SIGNING_CERT }}"
+          if ([string]::IsNullOrEmpty($cert)) { Write-Error "Missing CODE_SIGNING_CERT secret"; exit 1 }
+          [System.IO.File]::WriteAllBytes("signing.pfx", [Convert]::FromBase64String($cert))
+          Add-Content -Path $env:GITHUB_ENV -Value "WIN_CSC_LINK=$PWD\\signing.pfx"
+
+      - name: Decode CODE_SIGNING_CERT (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.CODE_SIGNING_CERT }}" ]; then
+            echo "Missing CODE_SIGNING_CERT secret"
+            exit 1
+          fi
+          printf "%s" "${{ secrets.CODE_SIGNING_CERT }}" | base64 --decode > signing.pfx
+          echo "CSC_LINK=$PWD/signing.pfx" >> $GITHUB_ENV
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

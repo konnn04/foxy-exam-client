@@ -11,10 +11,12 @@ import ExamReviewPage from "@/pages/exam-review";
 import HistoryPage from "@/pages/history";
 import SettingsPage from "@/pages/settings";
 import DisconnectedPage from "@/pages/disconnected";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 function App() {
   return (
-    <Routes>
+    <ErrorBoundary>
+      <Routes>
       {/* Public */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/disconnected" element={<DisconnectedPage />} />
@@ -49,6 +51,7 @@ function App() {
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
+    </ErrorBoundary>
   );
 }
 

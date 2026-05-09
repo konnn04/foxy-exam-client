@@ -1,18 +1,23 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { useTranslation } from "react-i18next";
 import api from "@/lib/api";
-import { CameraCheck } from "@/components/exam/camera-check";
-import { CameraFaceAuthCheck } from "@/components/exam/camera-face-auth-check";
-import { CameraOrientationCheck } from "@/components/exam/camera-orientation-check";
-import { EnvironmentCheck } from "@/components/exam/environment-check";
-import { ProctoringConfigSummary } from "@/components/exam/proctoring-config-summary";
+import { API_ENDPOINTS } from "@/config";
 import { Button } from "@/components/ui/button";
-import { ShieldAlert } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { CameraFaceAuthCheck } from "@/components/exam/camera-face-auth-check";
+import { MobileCameraSetup } from "@/components/exam/mobile-camera-setup";
 import { DEVELOPMENT_MODE } from "@/config/security.config";
-import type { ExamTrackingConfig, ExamData } from "@/types/exam";
+import type { ExamTrackingConfig, ExamData, WizardStep } from "@/types/exam";
+import { PRECHECK_STEPS } from "@/constants/exam";
+
 import { useToastCustom } from "@/hooks/use-toast-custom";
-import { preloadFaceLandmarker } from "@/lib/mediapipe-service";
+import { livekitPublisher } from "@/lib/livekit-publisher";
+import {
+  Shield, Check, ChevronRight, Loader2,
+} from "lucide-react";
+import { useTranslation } from "react-i18next";
+
+// ── Types ──────────────────────────────────────────────────────────────────
 
 export interface ExamPrecheckProps {
   examId: string;
@@ -26,312 +31,370 @@ export interface ExamPrecheckProps {
   ) => void;
 }
 
-/**
- * Phases: 0 load → 1 cấu hình giám sát (đọc + xác nhận) → 2 camera → 3 face → 4 hướng → 5 môi trường + màn hình.
- */
-export function ExamPrecheck({
-  examId,
-  attemptId,
-  onComplete,
-}: ExamPrecheckProps) {
+function usesCamera(c: ExamTrackingConfig) {
+  return c.level === "strict" || c.requireCamera || c.requireFaceAuth || c.monitorGaze || c.detectBannedObjects;
+}
+function usesScreen(c: ExamTrackingConfig) {
+  return c.level === "strict" || c.requireScreenShare || c.detectBannedApps;
+}
+function needsLiveKit(c: ExamTrackingConfig) {
+  return c.level === "strict" || c.requireCamera || c.requireMic || c.requireScreenShare
+    || c.requireDualCamera || c.monitorGaze || c.detectBannedObjects || c.detectBannedApps;
+}
+function StepIndicator({ current, done }: { current: WizardStep; done: Set<WizardStep> }) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap justify-center">
+      {PRECHECK_STEPS.map((s, i) => {
+        const isDone = done.has(s.key);
+        const isCurrent = s.key === current;
+        return (
+          <div key={s.key} className="flex items-center gap-1.5">
+            <div className={`
+              flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all
+              ${isCurrent ? "bg-primary text-primary-foreground shadow" : ""}
+              ${isDone && !isCurrent ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300" : ""}
+              ${!isDone && !isCurrent ? "bg-muted text-muted-foreground" : ""}
+            `}>
+              {isDone ? <Check className="h-3 w-3" /> : <span className="text-[10px] w-3 text-center">{i + 1}</span>}
+              <span className="hidden sm:inline">{t(s.label)}</span>
+            </div>
+            {i < PRECHECK_STEPS.length - 1 && <ChevronRight className="h-3 w-3 text-muted-foreground/50" />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Step: Loading ───────────────────────────────────────────────────────────
+
+function LoadingStep() {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col items-center justify-center gap-4 py-20">
+      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <p className="text-sm text-muted-foreground">{t("precheck.loadingConfigDesc")}</p>
+    </div>
+  );
+}
+
+import { InfoStep } from "./precheck-steps/info-step";
+import { CameraMicStep } from "./precheck-steps/camera-mic-step";
+import { MediaPipeStep } from "./precheck-steps/mediapipe-step";
+import { LivenessStep } from "./precheck-steps/liveness-step";
+import { EnvironmentStep } from "./precheck-steps/environment-step";
+
+// ── Main Wizard ─────────────────────────────────────────────────────────────
+
+export function ExamPrecheck({ examId, attemptId, onComplete }: ExamPrecheckProps) {
   const navigate = useNavigate();
   const toast = useToastCustom();
-  const { t } = useTranslation();
-
-  const [wizardPhase, setWizardPhase] = useState<number>(0);
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [mobileRelayOnly, setMobileRelayOnly] = useState(false);
+  const [step, setStep] = useState<WizardStep>("loading");
+  const [examData, setExamData] = useState<ExamData | null>(null);
   const [config, setConfig] = useState<ExamTrackingConfig | null>(null);
   const [proctorConfig, setProctorConfig] = useState<any>(null);
   const [configError, setConfigError] = useState("");
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [phoneAsPrimary, setPhoneAsPrimary] = useState(false);
+  const [doneSteps, setDoneSteps] = useState<Set<WizardStep>>(new Set(["loading"]));
+  const [isJoiningSupervisor, setIsJoiningSupervisor] = useState(false);
+  const { t } = useTranslation();
 
-  const startScreenCapture = useCallback(async (): Promise<MediaStream | null> => {
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      toast.error("Thiết bị không hỗ trợ chia sẻ màn hình.");
-      return null;
+  // ── Load config (early check) ──────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const [examRes, proctorRes] = await Promise.allSettled([
+          api.get(`${API_ENDPOINTS.EXAM_TAKE(examId, attemptId)}?page=1`),
+          api.get(API_ENDPOINTS.EXAM_PROCTOR_CONFIG(examId)),
+        ]);
+
+        const d: ExamData = examRes.status === "fulfilled" ? examRes.value.data : null;
+        if (!d) { setConfigError(t("precheck.loadDataError")); return; }
+        setExamData(d);
+
+        if (proctorRes.status === "fulfilled") setProctorConfig(proctorRes.value.data);
+
+        const cfg = d.config || { level: "none" };
+        setConfig(cfg);
+
+        // ── Early checks ───────────────────────────────────────────
+        const isElectron = window.electronAPI?.isElectron === true;
+
+        if ((cfg.level === "strict" || cfg.requireApp) && !isElectron) {
+          setConfigError(t("precheck.appRequiredError"));
+          return;
+        }
+
+        if ((cfg.level === "strict" || cfg.requireApp) && isElectron && window.electronAPI?.getSystemInfo) {
+          const sys = await window.electronAPI.getSystemInfo();
+          const ok = (sys.platform === "win32" && parseFloat(sys.release) >= 10)
+            || sys.platform === "darwin"
+            || (sys.platform === "linux" && sys.sessionType?.toLowerCase() === "x11");
+          if (!ok) {
+            setConfigError(t("precheck.osNotSupportedError", { platform: sys.platform }));
+            return;
+          }
+        }
+
+        // Skip camera steps if not needed
+        if (!usesCamera(cfg) && !usesScreen(cfg)) {
+          completeAfterSupervisorReady(null, null, cfg);
+          return;
+        }
+
+        setStep("info");
+      } catch {
+        setConfigError(t("precheck.configLoadError"));
+      }
+    })();
+  }, [examId, attemptId, t]);
+
+  // ── Supervisor connection ──────────────────────────────────────────
+  const completeAfterSupervisorReady = useCallback(async (
+    camStream: MediaStream | null,
+    screenStream: MediaStream | null,
+    cfg: ExamTrackingConfig,
+  ) => {
+    const phoneOnly = phoneAsPrimary && !cfg.requireDualCamera;
+    if (!needsLiveKit(cfg)) {
+      onComplete(camStream, screenStream, cfg, proctorConfig, { mobileRelayOnly: phoneOnly });
+      return;
     }
-
+    setIsJoiningSupervisor(true);
     try {
-      // WebRTC constraints
+      const ok = await livekitPublisher.ensureConnected({
+        examId: Number(examId),
+        attemptId: Number(attemptId),
+        onError: (msg) => toast.error(msg),
+      });
+      if (!ok) {
+        toast.error(t("precheck.aiConnectError"));
+        return;
+      }
+      onComplete(camStream, screenStream, cfg, proctorConfig, { mobileRelayOnly: phoneOnly });
+    } finally {
+      setIsJoiningSupervisor(false);
+    }
+  }, [examId, attemptId, onComplete, proctorConfig, toast, phoneAsPrimary]);
+
+  // ── Screen capture ─────────────────────────────────────────────────
+  const startScreenCapture = useCallback(async (): Promise<MediaStream | null> => {
+    if (!navigator.mediaDevices?.getDisplayMedia) return null;
+    try {
       const fps = proctorConfig?.client_stream?.screen?.fps || 5;
       const height = proctorConfig?.client_stream?.screen?.height || 1080;
 
-      // 1) Electron-specific capture (bypasses browser picker & selects targeted monitor)
       if (window.electronAPI?.getScreenSourceId) {
-        // Pick the exact monitor that currently contains the exam window.
         const displayInfo = await window.electronAPI.getDisplayId?.();
-        let sourceId: string | null = null;
-
         for (let i = 0; i < 3; i++) {
-          sourceId = await window.electronAPI.getScreenSourceId(displayInfo?.id);
-          if (sourceId) break;
+          const sourceId = await window.electronAPI.getScreenSourceId(displayInfo?.id);
+          if (sourceId) {
+            try {
+              return await navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: sourceId, maxFrameRate: fps } } as any,
+              });
+            } catch { /* fall through */ }
+          }
           await new Promise((r) => setTimeout(r, 180));
         }
-
-        if (sourceId) {
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-              audio: false,
-              video: {
-                mandatory: {
-                  chromeMediaSource: "desktop",
-                  chromeMediaSourceId: sourceId,
-                  maxFrameRate: fps,
-                  maxHeight: height
-                }
-              } as any
-            });
-            // If we successfully get a stream this way, return it immediately.
-            return stream;
-          } catch (electronMediaErr) {
-            console.warn("Electron getUserMedia fallback needed:", electronMediaErr);
-          }
-        }
       }
 
-      // 2) Standard Web/Fallback capture
-      const displayOptions = {
-        video: {
-          displaySurface: "monitor" as const,
-          frameRate: { ideal: fps, max: fps },
-          height: { ideal: height, max: height },
-        },
+      return await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: "monitor", frameRate: { ideal: fps }, height: { ideal: height } },
         audio: false,
-        systemAudio: "exclude" as const,
-        surfaceSwitching: "exclude" as const,
-      };
-
-      const stream = await navigator.mediaDevices.getDisplayMedia(displayOptions);
-      const videoTrack = stream.getVideoTracks()[0];
-      const settings = (videoTrack?.getSettings?.() ?? {}) as MediaTrackSettings & { displaySurface?: string };
-
-      if (!DEVELOPMENT_MODE.ENABLED && settings.displaySurface && settings.displaySurface !== "monitor") {
-        stream.getTracks().forEach((t) => t.stop());
-        toast.error("Chỉ được phép chia sẻ toàn màn hình để bắt đầu thi.");
-        return null;
-      }
-
-      if (videoTrack?.applyConstraints) {
-        videoTrack.applyConstraints({ frameRate: fps }).catch(() => {});
-      }
-
-      return stream;
-    } catch (e) {
-      console.error("[ScreenRecorder] Failed to start screen capture", e);
-      toast.error("Bạn cần cấp quyền chia sẻ màn hình để vào phòng thi.");
+      } as any);
+    } catch {
+      toast.error(t("precheck.screenSharePermissionError"));
       return null;
     }
   }, [proctorConfig, toast]);
 
-  useEffect(() => {
-    if (wizardPhase !== 0) return;
+  // ── Step navigation ────────────────────────────────────────────────
+  const markDone = (s: WizardStep) => setDoneSteps((prev) => new Set([...prev, s]));
 
-    (async () => {
-      try {
-        const res = await api.get(`/student/exams/${examId}/take/${attemptId}?page=1`);
-        const d: ExamData = res.data;
-
-        try {
-          const pRes = await api.get(`/student/exams/${examId}/proctor/config`);
-          setProctorConfig(pRes.data);
-        } catch (e) {
-          console.warn("Failed to fetch proctor config", e);
-        }
-
-        const remoteConfig = d.config || { level: "none", requireApp: false, requireCamera: false };
-        setConfig(remoteConfig);
-
-        const isElectron = window.electronAPI?.isElectron === true;
-
-        if (remoteConfig.level === "strict" || remoteConfig.requireApp) {
-          if (!isElectron) {
-            setConfigError("Bài thi này yêu cầu sử dụng Ứng dụng Giám sát trên Máy tính (App). Bạn không thể thi trên Trình duyệt Web.");
-            return;
-          }
-
-          if (window.electronAPI?.getSystemInfo) {
-            const sysInfo = await window.electronAPI.getSystemInfo();
-            const isWin10Plus = sysInfo.platform === "win32" && parseFloat(sysInfo.release) >= 10.0;
-            const isMac = sysInfo.platform === "darwin";
-            const isLinuxX11 = sysInfo.platform === "linux" && sysInfo.sessionType.toLowerCase() === "x11";
-
-            if (!isWin10Plus && !isMac && !isLinuxX11) {
-              setConfigError(`Hệ điều hành không được hỗ trợ (${sysInfo.platform} ${sysInfo.release} ${sysInfo.sessionType}). Yêu cầu Windows 10+, MacOS hoặc Linux X11.`);
-              return;
-            }
-          }
-        }
-
-        setWizardPhase(1);
-      } catch (err) {
-        console.error("Lỗi lấy cấu hình bài thi:", err);
-        setConfigError("Không thể tải cấu hình bài thi. Vui lòng thử lại.");
-      }
-    })();
-  }, [wizardPhase, examId, attemptId]);
-
-  const handleConfigReviewContinue = useCallback(() => {
-    if (!config) return;
-    
-    // Determine what checks are actually required based on config
-    const needsCamera = config.level === "strict" || config.requireCamera || config.requireFaceAuth || config.monitorGaze || config.detectBannedObjects;
-    const needsScreen = config.level === "strict" || config.requireScreenShare || config.detectBannedApps;
-    
-    if (needsCamera) {
-      setWizardPhase(2);
-    } else if (needsScreen) {
-      setWizardPhase(5);
-    } else {
-      onComplete(null, null, config, proctorConfig, { mobileRelayOnly: false });
-    }
-  }, [config, proctorConfig, onComplete]);
-
-  // Warm up MediaPipe as soon as proctoring config is known,
-  // so FaceAuth/Orientation and exam start don't re-pay full init cost.
-  useEffect(() => {
-    if (!config) return;
-    const needsCamera =
-      config.level === "strict" ||
-      config.requireCamera ||
-      config.requireFaceAuth ||
-      config.monitorGaze ||
-      config.detectBannedObjects;
-    if (!needsCamera) return;
-    void preloadFaceLandmarker({ blendshapes: true });
-  }, [config]);
-
-  const handleCameraConfirm = (stream: MediaStream) => {
-    setMobileRelayOnly(false);
-    setCameraStream(stream);
-
-    if (config?.requireFaceAuth) {
-      setWizardPhase(3);
-    } else {
-      setWizardPhase(4);
-    }
+  const skipIfNotNeeded = (targetStep: WizardStep, cfg: ExamTrackingConfig) => {
+    if (targetStep === "camera" && !usesCamera(cfg)) return "info";
+    if (targetStep === "mediapipe" && !usesCamera(cfg)) return "camera";
+    if (targetStep === "faceauth" && !cfg.requireFaceAuth) return "mediapipe";
+    if (targetStep === "dual_camera" && !cfg.requireDualCamera) return "environment";
+    return targetStep;
   };
 
-  const handleMobileRelayReady = useCallback(
-    (stream: MediaStream) => {
-      setCameraStream(stream);
-      setMobileRelayOnly(true);
-
-      if (config?.requireFaceAuth) {
-        setWizardPhase(3);
-      } else {
-        setWizardPhase(4);
-      }
-    },
-    [config],
-  );
-
-  const handleOrientationSuccess = useCallback(() => {
-    const needsScreen = config?.level === "strict" || config?.requireScreenShare || config?.detectBannedApps;
-    if (needsScreen) {
-      setWizardPhase(5);
-    } else {
-      onComplete(cameraStream, null, config as ExamTrackingConfig, proctorConfig, {
-        mobileRelayOnly,
-      });
-    }
-  }, [config, cameraStream, proctorConfig, mobileRelayOnly, onComplete]);
-
-  const handleEnvironmentSuccess = useCallback(async () => {
-    const mustShareScreen = config?.level === "strict" || config?.requireScreenShare === true || config?.detectBannedApps === true;
-    if (!mustShareScreen) {
-      onComplete(cameraStream, null, config as ExamTrackingConfig, proctorConfig, {
-        mobileRelayOnly,
-      });
-      return;
-    }
-
-    const screenStream = await startScreenCapture();
-    if (!screenStream) return;
-    onComplete(cameraStream, screenStream, config as ExamTrackingConfig, proctorConfig, {
-      mobileRelayOnly,
+  // ── Visible steps (must be before any conditional returns) ──────
+  const visibleSteps = useMemo(() => {
+    if (!config) return PRECHECK_STEPS;
+    return PRECHECK_STEPS.filter((s) => {
+      if (s.key === "camera" || s.key === "mediapipe") return usesCamera(config);
+      if (s.key === "faceauth") return config.requireFaceAuth;
+      if (s.key === "dual_camera") return config.requireDualCamera;
+      return true;
     });
-  }, [startScreenCapture, cameraStream, config, proctorConfig, onComplete, mobileRelayOnly]);
+  }, [config]);
 
+  // ── Render ──────────────────────────────────────────────────────────
   if (configError) {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-background p-6">
-        <ShieldAlert className="mb-4 h-16 w-16 text-destructive" />
-        <h2 className="mb-2 text-xl font-bold text-destructive">{t("precheck.accessDenied")}</h2>
+        <Shield className="mb-4 h-16 w-16 text-destructive" />
+        <h2 className="mb-2 text-xl font-bold text-destructive">{t("precheck.notEligible")}</h2>
         <p className="max-w-md text-center text-muted-foreground">{configError}</p>
         <Button className="mt-6" variant="outline" onClick={() => navigate("/dashboard")}>
-          {t("precheck.backDashboard")}
+          {t("precheck.backToHome")}
         </Button>
       </div>
     );
   }
 
-  if (wizardPhase === 0) {
+  if (isJoiningSupervisor) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center bg-background">
-        <div className="mb-4 h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-        <p className="text-muted-foreground">{t("precheck.loadingConfig")}</p>
+      <div className="flex h-screen flex-col items-center justify-center bg-background gap-3">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">{t("precheck.connectingSupervisor")}</p>
       </div>
     );
   }
 
-  if (wizardPhase === 1 && config) {
-    const needsCamera = config.level === "strict" || config.requireCamera || config.requireFaceAuth || config.monitorGaze || config.detectBannedObjects;
-    const needsScreen = config.level === "strict" || config.requireScreenShare || config.detectBannedApps;
-    
-    return (
-      <ProctoringConfigSummary
-        config={config}
-        proctorConfig={proctorConfig}
-        onContinue={handleConfigReviewContinue}
-        continueLabel={(!needsCamera && !needsScreen) ? t("precheck.startExam") : t("precheck.continueChecks")}
-      />
-    );
-  }
+  if (step === "loading") return <div className="flex h-screen items-center justify-center"><LoadingStep /></div>;
 
-  if (wizardPhase === 2) {
-    return (
-      <CameraCheck
-        examId={examId}
-        attemptId={attemptId}
-        clientConfig={proctorConfig?.client_stream?.camera}
-        onConfirm={handleCameraConfirm}
-        onMobileRelayReady={handleMobileRelayReady}
-        onSkip={() => navigate("/dashboard")}
-      />
-    );
-  }
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* Top bar */}
+      <header className="border-b px-4 py-3">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
+          <div>
+            <h1 className="text-sm font-bold">{examData?.exam?.name ?? examData?.exam?.title ?? t("precheck.examTitleDefault")}</h1>
+            <p className="text-[11px] text-muted-foreground">{t("precheck.environmentCheckDesc")}</p>
+          </div>
+          <StepIndicator current={step} done={doneSteps} />
+        </div>
+      </header>
 
-  if (wizardPhase === 3 && cameraStream) {
-    return (
-      <CameraFaceAuthCheck
-        examId={examId as string}
-        stream={cameraStream}
-        onSuccess={() => setWizardPhase(4)}
-        onCancel={() => navigate("/dashboard")}
-      />
-    );
-  }
+      {/* Main content */}
+      <main className="flex-1 flex items-start justify-center p-6 pt-10">
+        <div className="w-full max-w-2xl">
+          {step === "info" && config && examData && (
+            <InfoStep
+              examData={examData}
+              config={config}
+              proctorConfig={proctorConfig}
+              onContinue={() => {
+                markDone("info");
+                setStep(skipIfNotNeeded("camera", config));
+              }}
+              onBack={() => navigate("/dashboard")}
+            />
+          )}
 
-  if (wizardPhase === 4 && cameraStream) {
-    return (
-      <CameraOrientationCheck
-        stream={cameraStream}
-        onSuccess={handleOrientationSuccess}
-        onCancel={() => navigate("/dashboard")}
-      />
-    );
-  }
+          {step === "camera" && config && (
+            <CameraMicStep
+              config={config}
+              examId={examId}
+              attemptId={attemptId}
+              onModeChange={setPhoneAsPrimary}
+              onConfirm={(stream) => {
+                setCameraStream(stream);
+                markDone("camera");
+                setStep(skipIfNotNeeded("mediapipe", config));
+              }}
+              onBack={() => setStep("info")}
+            />
+          )}
 
-  if (wizardPhase === 5) {
-    return (
-      <EnvironmentCheck
-        config={config}
-        stream={cameraStream}
-        onSuccess={handleEnvironmentSuccess}
-        onCancel={() => navigate("/dashboard")}
-      />
-    );
-  }
+          {step === "mediapipe" && cameraStream && (
+            <MediaPipeStep
+              stream={cameraStream}
+              onDone={() => {
+                markDone("mediapipe");
+                setStep(skipIfNotNeeded("faceauth", config!));
+              }}
+              onBack={() => setStep("camera")}
+            />
+          )}
 
-  return null;
+          {step === "faceauth" && cameraStream && (
+            <CameraFaceAuthCheck
+              examId={examId}
+              stream={cameraStream}
+              onSuccess={() => {
+                markDone("faceauth");
+                setStep("liveness");
+              }}
+              onCancel={() => navigate("/dashboard")}
+            />
+          )}
+
+          {step === "liveness" && cameraStream && (
+            <LivenessStep
+              stream={cameraStream}
+              onDone={() => {
+                markDone("liveness");
+                setStep(skipIfNotNeeded("dual_camera", config!));
+              }}
+              onBack={() => setStep(skipIfNotNeeded("faceauth", config!))}
+            />
+          )}
+
+          {step === "dual_camera" && config && examId && attemptId && (
+            <MobileCameraSetup
+              examId={examId}
+              attemptId={attemptId}
+              laptopStream={cameraStream}
+              onSuccess={() => {
+                markDone("dual_camera");
+                setStep("environment");
+              }}
+              onBack={() => setStep("liveness")}
+              onSkip={() => {
+                markDone("dual_camera");
+                setStep("environment");
+              }}
+            />
+          )}
+
+          {step === "environment" && config && (
+            <EnvironmentStep
+              config={config}
+              stream={cameraStream}
+              onSuccess={async () => {
+                markDone("environment");
+                const needsScreen = usesScreen(config);
+                if (needsScreen) {
+                  const screenStream = await startScreenCapture();
+                  if (!screenStream) return;
+                  await completeAfterSupervisorReady(cameraStream, screenStream, config);
+                } else {
+                  await completeAfterSupervisorReady(cameraStream, null, config);
+                }
+              }}
+              onBack={() => setStep("liveness")}
+            />
+          )}
+        </div>
+      </main>
+
+      {/* ── DEV MODE: jump steps (hidden in production) ─────────── */}
+      {DEVELOPMENT_MODE.ENABLED && (
+        <div className="fixed bottom-3 right-3 z-50 bg-background border rounded-lg p-2 shadow-lg">
+          <p className="text-[9px] text-muted-foreground mb-1.5 uppercase tracking-wider text-center font-bold bg-amber-100 dark:bg-amber-900/30 dark:text-amber-300 rounded px-1.5 py-0.5">
+            ⚠ DEV MODE
+          </p>
+          <div className="flex gap-1">
+            {visibleSteps.map((s) => (
+              <Badge
+                key={s.key}
+                variant={step === s.key ? "default" : "outline"}
+                className="cursor-pointer text-[10px]"
+                onClick={() => setStep(s.key as WizardStep)}
+              >
+                {t(s.label)}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

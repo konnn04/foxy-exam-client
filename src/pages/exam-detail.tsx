@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import api from "@/lib/api";
+import { API_ENDPOINTS } from "@/config";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import { useAlertDialog } from "@/hooks/use-alert-dialog";
 import {
@@ -99,7 +100,7 @@ export default function ExamDetailPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await api.get(`/student/exams/${id}`);
+        const res = await api.get(API_ENDPOINTS.EXAM_DETAIL(id!));
         const root = res.data;
         const base = root.exam ?? root;
         setExam({
@@ -143,9 +144,9 @@ export default function ExamDetailPage() {
 
     setStarting(true);
     try {
-      const res = await api.post(`/student/exams/${id}/start`);
+      const res = await api.post(API_ENDPOINTS.EXAM_START(id!));
       const attemptId = res.data.attempt?.id ?? res.data.attempt_id ?? res.data.id;
-      navigate(`/exams/${id}/take/${attemptId}`);
+      navigate(`/exams/${id}/take/${attemptId}`, { replace: true });
     } catch (error: unknown) {
       const err = error as { response?: { data?: { message?: string } } };
       toast.error(t("examDetail.startError"), err?.response?.data?.message);
@@ -411,7 +412,7 @@ export default function ExamDetailPage() {
       )}
 
       {/* Face Registration Instructions */}
-      <FaceRegistrationModal open={showFaceModal} onOpenChange={setShowFaceModal} />
+      <FaceRegistrationModal open={showFaceModal} onOpenChange={setShowFaceModal} examId={id} />
     </div>
   );
 }

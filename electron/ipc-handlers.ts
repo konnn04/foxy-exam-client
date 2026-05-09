@@ -64,7 +64,9 @@ export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
 
   // ─── Full process list (with user ownership) ──────────────
   ipcMain.handle("get-process-list", async () => {
-    assertExamIpcSession("get-process-list");
+    if (!isExamIpcSessionActive()) {
+      return [];
+    }
     try {
       const command = platformOps.getProcessListCommand();
       const { stdout } = await execAsync(command, { maxBuffer: 2 * 1024 * 1024 });

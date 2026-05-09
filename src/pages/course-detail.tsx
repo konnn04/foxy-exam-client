@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import api from "@/lib/api";
+import { API_ENDPOINTS } from "@/config";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import {
   Card,
@@ -59,7 +60,7 @@ export default function CourseDetailPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await api.get(`/student/courses/${id}`);
+        const res = await api.get(API_ENDPOINTS.COURSE_DETAIL(id!));
         setCourse(res.data.course ?? res.data);
         setExams(res.data.exams ?? res.data.course?.exams ?? []);
       } catch {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import api from "@/lib/api";
+import { API_ENDPOINTS } from "@/config";
 import { useToastCustom } from "@/hooks/use-toast-custom";
 import {
   Card,
@@ -42,7 +43,7 @@ export default function CoursesPage() {
     (async () => {
       setLoading(true);
       try {
-        const res = await api.get("/student/courses", { params: { page } });
+        const res = await api.get(API_ENDPOINTS.COURSES, { params: { page } });
         setCourses(res.data.data ?? res.data.courses ?? res.data);
         setMeta(res.data.meta ?? res.data);
       } catch {
