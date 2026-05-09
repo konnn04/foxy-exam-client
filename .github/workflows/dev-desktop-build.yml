@@ -70,6 +70,8 @@ jobs:
         shell: bash
         run: pnpm exec electron-builder --publish never '-c.productName=Foxy Exam (Dev)'
         env:
+          CSC_LINK: ${{ secrets.CODE_SIGNING_CERT }}
+          CSC_KEY_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload artifact

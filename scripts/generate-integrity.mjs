@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -12,9 +10,14 @@ const ELECTRON_DIST = path.join(ROOT, "dist-electron");
 const MANIFEST_PATH = path.join(ELECTRON_DIST, "integrity-manifest.json");
 
 function loadEnvSecret() {
+  // Prefer env var (CI), fallback to .env file (local dev)
+  if (process.env.INTEGRITY_SECRET) {
+    return process.env.INTEGRITY_SECRET;
+  }
+
   const envPath = path.join(ROOT, ".env");
   if (!existsSync(envPath)) {
-    console.error("❌ .env not found");
+    console.error("❌ .env not found and INTEGRITY_SECRET env var not set");
     process.exit(1);
   }
   const match = readFileSync(envPath, "utf-8").match(/^INTEGRITY_SECRET=["']?(.+?)["']?\s*$/m);

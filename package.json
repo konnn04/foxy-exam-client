@@ -54,11 +54,6 @@
       ],
       "artifactName": "${productName}-Setup.${ext}",
       "icon": "public/assets/icons/icon.ico",
-      "signingHashAlgorithms": [
-        "sha256"
-      ],
-      "certificateFile": "certs/signing.pfx",
-      "certificatePassword": "foxy-exam-kltn",
       "forceCodeSigning": false
     },
     "linux": {
