@@ -145,18 +145,6 @@ jobs:
           pattern: foxy-exam-dev-*
           merge-multiple: false
 
-      - name: Ensure GH token for publishing
-        shell: bash
-        run: |
-          if [ -n "${{ secrets.RELEASE_GH_TOKEN }}" ]; then
-            echo "Using RELEASE_GH_TOKEN secret for GitHub publishing"
-            echo "GH_TOKEN=${{ secrets.RELEASE_GH_TOKEN }}" >> $GITHUB_ENV
-          else
-            echo "Falling back to workflow GITHUB_TOKEN for publishing (may be limited)."
-            echo "GH_TOKEN=${{ secrets.GITHUB_TOKEN }}" >> $GITHUB_ENV
-            echo "If release creation fails with 403, create a Personal Access Token (repo scope) and set it as secret RELEASE_GH_TOKEN." >&2
-          fi
-
       - name: Recreate draft release
         shell: bash
         env:
