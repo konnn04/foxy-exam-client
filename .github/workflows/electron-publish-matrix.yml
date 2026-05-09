@@ -94,10 +94,10 @@ jobs:
         run: |
           if ! command -v openssl >/dev/null 2>&1; then
             echo "openssl not found; cannot validate signing certificate." >&2
-            exit 0
+            exit 1
           fi
           set -e
-          openssl pkcs12 -in signing.pfx -nokeys -passin pass:"$CSC_KEY_PASSWORD" -info >/dev/null
+          openssl pkcs12 -in signing.pfx -nokeys -passin pass:"$CSC_KEY_PASSWORD" -noout >/dev/null 2>&1
           echo "Signing certificate validated."
 
       - name: Validate signing certificate (Windows)
@@ -117,6 +117,5 @@ jobs:
       - name: Build and Publish Electron App
         run: pnpm exec electron-builder --publish always
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_KEY_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: false

@@ -84,18 +84,6 @@ jobs:
           printf "%s" "${{ secrets.CODE_SIGNING_CERT }}" | base64 --decode > signing.pfx
           echo "CSC_LINK=$PWD/signing.pfx" >> $GITHUB_ENV
 
-      - name: Ensure GH token for publishing
-        shell: bash
-        run: |
-          if [ -n "${{ secrets.RELEASE_GH_TOKEN }}" ]; then
-            echo "Using RELEASE_GH_TOKEN secret for GitHub publishing"
-            echo "GH_TOKEN=${{ secrets.RELEASE_GH_TOKEN }}" >> $GITHUB_ENV
-          else
-            echo "Falling back to workflow GITHUB_TOKEN for publishing (may be limited)."
-            echo "GH_TOKEN=${{ secrets.GITHUB_TOKEN }}" >> $GITHUB_ENV
-            echo "If release creation fails with 403, create a Personal Access Token (repo scope) and set it as secret RELEASE_GH_TOKEN." >&2
-          fi
-
       - name: Validate signing certificate (Linux/macOS)
         if: runner.os != 'Windows'
         shell: bash
@@ -104,10 +92,10 @@ jobs:
         run: |
           if ! command -v openssl >/dev/null 2>&1; then
             echo "openssl not found; cannot validate signing certificate." >&2
-            exit 0
+            exit 1
           fi
           set -e
-          openssl pkcs12 -in signing.pfx -nokeys -passin pass:"$CSC_KEY_PASSWORD" -info >/dev/null
+          openssl pkcs12 -in signing.pfx -nokeys -passin pass:"$CSC_KEY_PASSWORD" -noout >/dev/null 2>&1
           echo "Signing certificate validated."
 
       - name: Validate signing certificate (Windows)
@@ -157,10 +145,20 @@ jobs:
           pattern: foxy-exam-dev-*
           merge-multiple: false
 
+      - name: Ensure GH token for publishing
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.RELEASE_GH_TOKEN }}" ]; then
+            echo "Using RELEASE_GH_TOKEN secret for GitHub publishing"
+            echo "GH_TOKEN=${{ secrets.RELEASE_GH_TOKEN }}" >> $GITHUB_ENV
+          else
+            echo "Falling back to workflow GITHUB_TOKEN for publishing (may be limited)."
+            echo "GH_TOKEN=${{ secrets.GITHUB_TOKEN }}" >> $GITHUB_ENV
+            echo "If release creation fails with 403, create a Personal Access Token (repo scope) and set it as secret RELEASE_GH_TOKEN." >&2
+          fi
+
       - name: Recreate draft release
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p upload
