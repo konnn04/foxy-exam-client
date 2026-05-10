@@ -9,7 +9,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import api from "@/lib/api";
-import { API_ENDPOINTS } from "@/config";
+import { API_CONFIG, API_ENDPOINTS } from "@/config";
+
+const fallbackFaceRegistrationUrl = () =>
+  `${API_CONFIG.OAUTH_BASE_URL.replace(/\/$/, "")}/student/face-registration`;
 
 interface FaceRegistrationModalProps {
   open: boolean;
@@ -18,10 +21,8 @@ interface FaceRegistrationModalProps {
   attemptId?: number | string;
 }
 
-const FALLBACK_URL = "https://exam-local.konnn04.dev/student/face-registration";
-
 export function FaceRegistrationModal({ open, onOpenChange, examId, attemptId }: FaceRegistrationModalProps) {
-  const [qrUrl, setQrUrl] = useState<string>(FALLBACK_URL);
+  const [qrUrl, setQrUrl] = useState<string>(() => fallbackFaceRegistrationUrl());
   const [loading, setLoading] = useState(false);
   const [isAutoLogin, setIsAutoLogin] = useState(false);
   const [apiError, setApiError] = useState(false);
@@ -32,6 +33,7 @@ export function FaceRegistrationModal({ open, onOpenChange, examId, attemptId }:
     setLoading(true);
     setApiError(false);
     setIsAutoLogin(false);
+    setQrUrl(fallbackFaceRegistrationUrl());
 
     const endpoint = examId && attemptId
       ? API_ENDPOINTS.EXAM_FACE_REGISTER_QR(examId, attemptId)
@@ -46,7 +48,7 @@ export function FaceRegistrationModal({ open, onOpenChange, examId, attemptId }:
       .catch((err) => {
         console.warn('[FaceRegistration] QR token API failed, using fallback URL:', err);
         setApiError(true);
-        setQrUrl(FALLBACK_URL);
+        setQrUrl(fallbackFaceRegistrationUrl());
       })
       .finally(() => setLoading(false));
   }, [open, examId, attemptId]);

@@ -32,11 +32,13 @@ import {
   User,
   ShieldCheck,
   Bug,
+  QrCode,
 } from "lucide-react";
 import * as Sentry from "@sentry/electron/renderer";
 import { API_CONFIG } from "@/config";
 import { AvatarCropper } from "@/components/ui/avatar-cropper";
 import { useToastCustom } from "@/hooks/use-toast-custom";
+import { FaceRegistrationModal } from "@/components/face-registration-modal";
 
 const PORTAL_URL = API_CONFIG.OAUTH_BASE_URL;
 
@@ -51,6 +53,7 @@ export default function SettingsPage() {
     String(import.meta.env.VITE_SENTRY_DSN ?? "").trim() !== "";
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
   const [isCropperOpen, setIsCropperOpen] = useState(false);
+  const [faceQrOpen, setFaceQrOpen] = useState(false);
 
   const currentLang = i18n.language?.startsWith("vi") ? "vi" : "en";
 
@@ -128,21 +131,31 @@ export default function SettingsPage() {
 
           <Separator />
 
-          <div className="flex items-center gap-3">
-            <ShieldCheck className="h-5 w-5 text-muted-foreground" />
-            <div className="flex-1">
-              <p className="text-sm font-medium">{t("settings.faceTitle")}</p>
-              <p className="text-xs text-muted-foreground">{t("settings.faceDesc")}</p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <ShieldCheck className="h-5 w-5 text-muted-foreground shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t("settings.faceTitle")}</p>
+                <p className="text-xs text-muted-foreground">{t("settings.faceDesc")}</p>
+              </div>
             </div>
-            <Button variant="outline" size="sm" asChild>
-              <a href={`${PORTAL_URL}/student/face-registration`} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4 mr-1.5" />
-                {t("common.manage")}
-              </a>
-            </Button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <Button type="button" variant="default" size="sm" onClick={() => setFaceQrOpen(true)}>
+                <QrCode className="h-4 w-4 mr-1.5" />
+                {t("settings.faceQrButton")}
+              </Button>
+              <Button variant="outline" size="sm" asChild>
+                <a href={`${PORTAL_URL}/student/face-registration`} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-4 w-4 mr-1.5" />
+                  {t("common.manage")}
+                </a>
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
+
+      <FaceRegistrationModal open={faceQrOpen} onOpenChange={setFaceQrOpen} />
 
       <Card>
         <CardHeader>

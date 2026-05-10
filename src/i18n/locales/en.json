@@ -194,6 +194,7 @@
     "profileTitle": "Profile",
     "faceTitle": "Face biometrics",
     "faceDesc": "Manage registered face for exam authentication",
+    "faceQrButton": "",
     "appearanceTitle": "Appearance",
     "appearanceDesc": "Customize application appearance",
     "themeLabel": "Theme",
