@@ -64,6 +64,12 @@ jobs:
         env:
           INTEGRITY_SECRET: ${{ secrets.INTEGRITY_SECRET }}
 
+      - name: Verify MediaPipe in dist
+        shell: bash
+        run: |
+          test -f dist/mediapipe/face_landmarker.task || (echo "missing dist/mediapipe/face_landmarker.task" && exit 1)
+          test -f dist/mediapipe/wasm/vision_wasm_internal.wasm || (echo "missing vision wasm" && exit 1)
+
       - name: Decode CODE_SIGNING_CERT (Windows)
         if: runner.os == 'Windows'
         shell: powershell

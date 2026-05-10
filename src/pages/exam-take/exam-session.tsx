@@ -27,6 +27,9 @@ import { isLeafAnswered } from "@/lib/exam-answer-utils";
 import { useExamHistoryLock } from "@/hooks/use-exam-history-lock";
 import { DualCameraSpotCheckOverlay } from "@/components/exam/dual-camera-spot-check-overlay";
 
+/** Shown while proctor pipeline warms up — not a gaze/pose warning */
+const MONITOR_SYNC_PLACEHOLDER = "Đang đồng bộ luồng theo dõi AI chống gian lận...";
+
 export interface ExamSessionProps {
   examId: string;
   attemptId: string;
@@ -156,7 +159,7 @@ export function ExamSession({
   const lastToastWarningRef = useRef("");
 
   useEffect(() => {
-    if (monitorWarning && monitorWarning !== "Đang đồng bộ luồng theo dõi AI chống gian lận...") {
+    if (monitorWarning && monitorWarning !== MONITOR_SYNC_PLACEHOLDER) {
       if (lastToastWarningRef.current !== monitorWarning) {
         // Face warnings now go via telemetry (face_gaze events in use-face-monitor)
         if (DEVELOPMENT_MODE.ENABLED && NO_LOCKSCREEN_WHEN_DEV_MODE) {
@@ -184,6 +187,15 @@ export function ExamSession({
   // Only server-side faceAuthLockedMsg triggers the hard lock overlay;
   // client-side monitorWarning is shown as a toast, not a lock.
   const showLockOverlay = faceAuthLockedMsg !== "" && !devBypassLock && !(DEVELOPMENT_MODE.ENABLED && NO_LOCKSCREEN_WHEN_DEV_MODE);
+
+  const softClientFaceWarning =
+    config?.requireCamera !== false &&
+    faceAuthLockedMsg === "" &&
+    monitorWarning !== "" &&
+    monitorWarning !== MONITOR_SYNC_PLACEHOLDER &&
+    !(DEVELOPMENT_MODE.ENABLED && NO_LOCKSCREEN_WHEN_DEV_MODE)
+      ? monitorWarning
+      : "";
 
   useEffect(() => {
     if (!effectiveWarning && devBypassLock) {
@@ -860,6 +872,7 @@ export function ExamSession({
             isBlurred={isBlurred}
             hardwareLock={hardwareLock}
             monitorWarning={effectiveWarning}
+            softClientFaceWarning={softClientFaceWarning}
             blurReason={blurReason}
             violationsCount={violations.length}
             devBypassLock={devBypassLock}

@@ -19,7 +19,7 @@
     "prebuild": "node scripts/sync-mediapipe-assets.mjs",
     "dev": "vite",
     "lint": "tsc --noEmit",
-    "build": "tsc && vite build && node scripts/generate-integrity.mjs",
+    "build": "node scripts/sync-mediapipe-assets.mjs && tsc && vite build && node scripts/generate-integrity.mjs",
     "build:dev": "node scripts/sync-mediapipe-assets.mjs && tsc && vite build --mode development",
     "build:electron": "node scripts/sync-mediapipe-assets.mjs && tsc && vite build && node scripts/generate-integrity.mjs && electron-builder",
     "release:local": "pnpm run build && electron-builder --publish never",

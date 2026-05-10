@@ -3,6 +3,7 @@ import { DEVELOPMENT_MODE } from "@/config/security.config";
 import {
   Maximize,
   ShieldAlert,
+  Eye,
 } from "lucide-react";
 
 export interface ExamOverlayProps {
@@ -10,6 +11,8 @@ export interface ExamOverlayProps {
   isBlurred: boolean;
   hardwareLock: string;
   monitorWarning: string;
+  /** Client-side gaze/pose warning when there is no server face-auth lock — shown as a dim banner */
+  softClientFaceWarning?: string;
   blurReason: string;
   violationsCount: number;
   devBypassLock: boolean;
@@ -23,6 +26,7 @@ export function ExamOverlay({
   isBlurred,
   hardwareLock,
   monitorWarning,
+  softClientFaceWarning = "",
   blurReason,
   violationsCount,
   devBypassLock,
@@ -32,6 +36,25 @@ export function ExamOverlay({
 }: ExamOverlayProps) {
   return (
     <>
+      {softClientFaceWarning !== "" &&
+        !showLockOverlay &&
+        !isBlurred &&
+        hardwareLock === "" && (
+          <div
+            className="absolute inset-0 z-[85] flex flex-col items-center justify-start bg-background/75 px-6 pt-[max(4rem,12vh)] backdrop-blur-sm"
+            aria-live="polite"
+          >
+            <div className="flex max-w-lg flex-col items-center gap-3 rounded-2xl border border-amber-500/40 bg-card/95 p-6 text-center shadow-xl">
+              <Eye className="h-10 w-10 shrink-0 text-amber-600 dark:text-amber-400" />
+              <p className="text-sm font-semibold text-foreground">Cảnh báo tư thế / khuôn mặt</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">{softClientFaceWarning}</p>
+              <p className="text-xs text-muted-foreground">
+                Vui lòng điều chỉnh để tiếp tục làm bài. Phần làm bài tạm khóa cho đến khi hợp lệ.
+              </p>
+            </div>
+          </div>
+        )}
+
       {showLockOverlay && !isBlurred && (
         <div className="absolute inset-0 z-[90] flex items-center justify-center bg-background/95">
           <div className="bg-card border-2 border-primary/50 rounded-2xl p-8 max-w-sm text-center space-y-4 shadow-xl">
