@@ -37,5 +37,8 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      # generate-integrity.mjs needs INTEGRITY_SECRET or a .env containing it (see scripts/generate-integrity.mjs).
       - name: Build
         run: pnpm run build
+        env:
+          INTEGRITY_SECRET: ${{ secrets.INTEGRITY_SECRET }}

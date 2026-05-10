@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     name: Dev build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
 
@@ -73,8 +73,8 @@ jobs:
           [System.IO.File]::WriteAllBytes("signing.pfx", [Convert]::FromBase64String($cert))
           Add-Content -Path $env:GITHUB_ENV -Value "WIN_CSC_LINK=$PWD\\signing.pfx"
 
-      - name: Decode CODE_SIGNING_CERT (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Decode CODE_SIGNING_CERT (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           if [ -z "${{ secrets.CODE_SIGNING_CERT }}" ]; then
@@ -84,8 +84,8 @@ jobs:
           printf "%s" "${{ secrets.CODE_SIGNING_CERT }}" | base64 --decode > signing.pfx
           echo "CSC_LINK=$PWD/signing.pfx" >> $GITHUB_ENV
 
-      - name: Validate signing certificate (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Validate signing certificate (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         env:
           CSC_KEY_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
@@ -113,10 +113,18 @@ jobs:
           }
 
       - name: Package Electron (current OS)
+        if: runner.os != 'macOS'
         shell: bash
         run: pnpm exec electron-builder --publish never '-c.productName=Foxy Exam (Dev)'
         env:
           CSC_KEY_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Package Electron (macOS, unsigned)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: pnpm exec electron-builder --publish never --config '{"mac":{"identity":null},"productName":"Foxy Exam (Dev)"}'
+        env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload artifact

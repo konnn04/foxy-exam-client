@@ -6,7 +6,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     name: Publish (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     permissions:
@@ -63,8 +63,9 @@ jobs:
           [System.IO.File]::WriteAllBytes("signing.pfx", [Convert]::FromBase64String($cert))
           Add-Content -Path $env:GITHUB_ENV -Value "WIN_CSC_LINK=$PWD\\signing.pfx"
 
-      - name: Decode CODE_SIGNING_CERT (Linux/macOS)
-        if: runner.os != 'Windows'
+      # Windows PFX is not an Apple Developer ID cert; macOS builds are unsigned in CI unless you add Apple signing secrets later.
+      - name: Decode CODE_SIGNING_CERT (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           if [ -z "${{ secrets.CODE_SIGNING_CERT }}" ]; then
@@ -86,8 +87,8 @@ jobs:
             echo "If release creation fails with 403, create a Personal Access Token (repo scope) and set it as secret RELEASE_GH_TOKEN." >&2
           fi
 
-      - name: Validate signing certificate (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Validate signing certificate (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         env:
           CSC_KEY_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
@@ -115,7 +116,14 @@ jobs:
           }
 
       - name: Build and Publish Electron App
+        if: runner.os != 'macOS'
         run: pnpm exec electron-builder --publish always
         env:
           CSC_KEY_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Build and Publish Electron App (macOS, unsigned)
+        if: runner.os == 'macOS'
+        run: pnpm exec electron-builder --publish always --config '{"mac":{"identity":null}}'
+        env:
           CSC_IDENTITY_AUTO_DISCOVERY: false

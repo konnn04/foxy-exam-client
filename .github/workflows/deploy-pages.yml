@@ -44,9 +44,22 @@ jobs:
         
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Create .env from secret
+        shell: bash
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE }}
+        run: |
+          if [ -z "$ENV_FILE_CONTENT" ]; then
+            echo "Missing secret ENV_FILE (needed for Vite build + integrity step)."
+            exit 1
+          fi
+          printf "%s" "$ENV_FILE_CONTENT" > .env
         
       - name: Build Web
         run: pnpm run build
+        env:
+          INTEGRITY_SECRET: ${{ secrets.INTEGRITY_SECRET }}
         
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
