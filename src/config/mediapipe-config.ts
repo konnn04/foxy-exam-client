@@ -1,7 +1,12 @@
 // ─── MediaPipe Face Landmarker Configuration ─────────────────────────────
-
+//
+// WASM: jsDelivr serves the same files as npm `@mediapipe/tasks-vision` (vision_wasm_internal.*).
+// Use `@latest` so the WASM loader matches whatever API the runtime expects from the CDN.
+// If another PC "cannot download": allow HTTPS to cdn.jsdelivr.net AND storage.googleapis.com
+// (model .task below); corporate firewall / VPN / antivirus often blocks one of these.
+//
 export const MEDIAPIPE_WASM_URL =
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/wasm";
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm/";
 
 export const FACE_LANDMARKER_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
