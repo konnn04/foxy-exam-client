@@ -122,8 +122,16 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      # electron-builder --config expects a file path (v26+), not inline JSON.
       - name: Build and Publish Electron App (macOS, unsigned)
         if: runner.os == 'macOS'
-        run: pnpm exec electron-builder --publish always --config '{"mac":{"identity":null}}'
+        shell: bash
+        run: |
+          cat > electron-builder.mac-ci.json <<'EOF'
+          {
+            "mac": { "identity": null }
+          }
+          EOF
+          pnpm exec electron-builder --publish always --config electron-builder.mac-ci.json
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
