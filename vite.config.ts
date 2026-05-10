@@ -55,21 +55,11 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
-    minify: 'terser',
-    terserOptions: {
-      compress: {
-        drop_console: true,
-        drop_debugger: true,
-        passes: 2,
-        dead_code: true,
-      },
-      mangle: {
-        toplevel: true,
-        properties: { regex: /^_/ },
-      },
-      format: {
-        comments: false,
-      },
+    // esbuild minify: avoids Terser mangling breaking @mediapipe/tasks-vision WASM glue
+    // (production errors like "this.i.Pi is not a function").
+    minify: "esbuild",
+    esbuild: {
+      drop: mode === "production" ? ["console", "debugger"] : [],
     },
   },
 }));
