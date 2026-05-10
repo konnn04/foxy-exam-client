@@ -14,11 +14,14 @@
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
+    "sync-mediapipe": "node scripts/sync-mediapipe-assets.mjs",
+    "predev": "node scripts/sync-mediapipe-assets.mjs",
+    "prebuild": "node scripts/sync-mediapipe-assets.mjs",
     "dev": "vite",
     "lint": "tsc --noEmit",
     "build": "tsc && vite build && node scripts/generate-integrity.mjs",
-    "build:dev": "tsc && vite build --mode development",
-    "build:electron": "tsc && vite build && node scripts/generate-integrity.mjs && electron-builder",
+    "build:dev": "node scripts/sync-mediapipe-assets.mjs && tsc && vite build --mode development",
+    "build:electron": "node scripts/sync-mediapipe-assets.mjs && tsc && vite build && node scripts/generate-integrity.mjs && electron-builder",
     "release:local": "pnpm run build && electron-builder --publish never",
     "release:linux": "pnpm run build && electron-builder --linux --publish never",
     "release:win": "node ./scripts/release-win-guard.mjs && pnpm run build && electron-builder --win --publish never",
@@ -30,6 +33,10 @@
     "directories": {
       "output": "release/${version}"
     },
+    "asarUnpack": [
+      "**/*.wasm",
+      "**/*.task"
+    ],
     "files": [
       "dist",
       "dist-electron"

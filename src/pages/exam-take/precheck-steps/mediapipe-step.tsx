@@ -236,25 +236,23 @@ export function MediaPipeStep({
         )}
       </div>
 
-      {status === "error" && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          {errorMessage}
-        </div>
-      )}
-
       <div>
-        <h3 className="font-semibold">
-          {status === "init" && t("precheck.initializingAI")}
-          {status === "testing" && t("precheck.testingCamera")}
-          {status === "done" && t("precheck.cameraStable")}
-          {status === "error" && t("precheck.modelLoadErrorTitle")}
-        </h3>
-        <p className="text-xs text-muted-foreground mt-1">
-          {status === "init" && t("precheck.downloadingModel")}
-          {status === "testing" && t("precheck.keepStill")}
-          {status === "done" && t("precheck.readyNextStep")}
-          {status === "error" && t("precheck.modelLoadErrorHint")}
-        </p>
+        {status === "error" ? (
+          <p className="text-sm font-medium text-destructive">{errorMessage}</p>
+        ) : (
+          <>
+            <h3 className="font-semibold">
+              {status === "init" && t("precheck.initializingAI")}
+              {status === "testing" && t("precheck.testingCamera")}
+              {status === "done" && t("precheck.cameraStable")}
+            </h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              {status === "init" && t("precheck.downloadingModel")}
+              {status === "testing" && t("precheck.keepStill")}
+              {status === "done" && t("precheck.readyNextStep")}
+            </p>
+          </>
+        )}
       </div>
 
       <Progress value={progress} className="h-1.5 max-w-xs mx-auto" />

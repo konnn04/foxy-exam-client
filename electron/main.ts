@@ -54,13 +54,14 @@ if (!gotSingleInstanceLock) {
 
   app.whenReady().then(() => {
   // ── Content-Security-Policy ──────────────────────────────────────
-  // Production: strict CSP, no unsafe-eval
+  // Production: strict CSP. MediaPipe WASM needs 'wasm-unsafe-eval' on script-src
+  // (see Chrome docs); do not use full 'unsafe-eval'.
   // Dev: allows localhost HMR + eval for Vite
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const csp = ELECTRON_RUNTIME.isProduction
       ? [
           "default-src 'self'",
-          "script-src 'self' https://cdn.jsdelivr.net https://storage.googleapis.com",
+          "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://storage.googleapis.com",
           "style-src 'self' 'unsafe-inline'",
           "connect-src 'self' https: wss: blob:",
           "media-src 'self' blob: mediastream:",

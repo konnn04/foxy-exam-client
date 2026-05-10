@@ -1,15 +1,28 @@
 // ─── MediaPipe Face Landmarker Configuration ─────────────────────────────
 //
-// WASM: jsDelivr serves the same files as npm `@mediapipe/tasks-vision` (vision_wasm_internal.*).
-// Use `@latest` so the WASM loader matches whatever API the runtime expects from the CDN.
-// If another PC "cannot download": allow HTTPS to cdn.jsdelivr.net AND storage.googleapis.com
-// (model .task below); corporate firewall / VPN / antivirus often blocks one of these.
+// Vision WASM + face_landmarker.task are bundled under public/mediapipe/ (see
+// scripts/sync-mediapipe-assets.mjs, run via prebuild/predev). Vite copies them
+// to dist/ so packaged Electron loads offline from the same origin as index.html.
 //
-export const MEDIAPIPE_WASM_URL =
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm/";
 
-export const FACE_LANDMARKER_MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+/** Resolve public/mediapipe/* — always from server root in http(s), from index.html dir for file://. */
+function bundledMediapipeUrl(relativeFromPublicRoot: string): string {
+  const clean = relativeFromPublicRoot.replace(/^\//, "");
+  if (typeof window !== "undefined" && window.location?.href) {
+    if (window.location.protocol === "file:") {
+      const base = import.meta.env.BASE_URL ?? "./";
+      const combined = `${base}${clean}`.replace(/([^:]\/)\/+/g, "$1");
+      return new URL(combined, window.location.href).href;
+    }
+    return new URL(`/${clean}`, window.location.origin).href;
+  }
+  return `/${clean}`;
+}
+
+/** Base directory for MediaPipe Vision WASM (must end with /). */
+export const MEDIAPIPE_WASM_URL = bundledMediapipeUrl("mediapipe/wasm/");
+
+export const FACE_LANDMARKER_MODEL_URL = bundledMediapipeUrl("mediapipe/face_landmarker.task");
 
 // ─── Processing ──────────────────────────────────────────────────────────
 
