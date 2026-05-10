@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { acquireFaceLandmarker, releaseFaceLandmarker } from "@/lib/mediapipe-service";
+import { captureRendererException } from "@/lib/capture-renderer-exception";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -102,6 +103,11 @@ export function MediaPipeStep({
       const video = videoRef.current;
       if (!video) {
         if (active) {
+          const err = new Error("MediaPipeStep: video ref missing");
+          captureRendererException(err, {
+            tags: { mediapipe_precheck: "video_ref" },
+            extra: { streamActive: stream.active, trackCount: stream.getTracks().length },
+          });
           setStatus("error");
           setErrorMessage(t("precheck.modelLoadVideoMissing"));
         }
@@ -112,6 +118,16 @@ export function MediaPipeStep({
         await waitForVideoDimensions(video, VIDEO_READY_TIMEOUT_MS);
       } catch {
         if (!active) return;
+        const err = new Error("MediaPipeStep: video dimensions timeout");
+        captureRendererException(err, {
+          tags: { mediapipe_precheck: "video_dimensions" },
+          extra: {
+            videoWidth: video.videoWidth,
+            videoHeight: video.videoHeight,
+            readyState: video.readyState,
+            onLine: typeof navigator !== "undefined" ? navigator.onLine : undefined,
+          },
+        });
         setStatus("error");
         setErrorMessage(t("precheck.modelLoadVideoTimeout"));
         return;
@@ -128,6 +144,14 @@ export function MediaPipeStep({
       } catch (err) {
         console.error("[MediaPipeStep] Face landmarker load failed:", err);
         if (!active) return;
+        captureRendererException(err instanceof Error ? err : new Error(String(err)), {
+          tags: { mediapipe_precheck: "face_landmarker_load" },
+          extra: {
+            kind: err instanceof Error && err.message === "model_timeout" ? "timeout" : "rejected",
+            onLine: typeof navigator !== "undefined" ? navigator.onLine : undefined,
+            userAgent: typeof navigator !== "undefined" ? navigator.userAgent : undefined,
+          },
+        });
         setStatus("error");
         const msg = err instanceof Error && err.message === "model_timeout"
           ? t("precheck.modelLoadTimeout")
@@ -168,6 +192,10 @@ export function MediaPipeStep({
               console.error("[MediaPipeStep] detectForVideo:", inferErr);
               if (active) {
                 stopLoop();
+                captureRendererException(
+                  inferErr instanceof Error ? inferErr : new Error(String(inferErr)),
+                  { tags: { mediapipe_precheck: "detect_for_video" } },
+                );
                 setStatus("error");
                 setErrorMessage(t("precheck.modelInferenceFailed"));
               }

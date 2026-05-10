@@ -22,7 +22,13 @@ function cacheKey(opts?: FaceLandmarkerOpts): string {
 
 async function getFilesetResolver() {
   if (!filesetResolverPromise) {
-    filesetResolverPromise = FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_URL);
+    filesetResolverPromise = FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_URL).catch((err) => {
+      // Critical: first failed fetch must not leave a permanently rejected promise,
+      // otherwise retries never hit the network again (common on Windows when Wi‑Fi
+      // is not ready yet at app launch).
+      filesetResolverPromise = null;
+      throw err;
+    });
   }
   return filesetResolverPromise;
 }
@@ -59,24 +65,28 @@ export async function acquireFaceLandmarker(opts?: FaceLandmarkerOpts): Promise<
     entry.disposeTimer = null;
   }
 
-  entry.refCount += 1;
-
   if (entry.instance) {
+    entry.refCount += 1;
     return entry.instance;
   }
 
   if (!entry.createPromise) {
-    entry.createPromise = createNewFaceLandmarker(opts)
-      .then((instance) => {
-        entry!.instance = instance;
-        return instance;
-      })
-      .finally(() => {
-        entry!.createPromise = null;
-      });
+    entry.createPromise = createNewFaceLandmarker(opts).then((instance) => {
+      entry!.instance = instance;
+      return instance;
+    });
   }
 
-  return entry.createPromise;
+  try {
+    const instance = await entry.createPromise;
+    entry.refCount += 1;
+    return instance;
+  } catch (err) {
+    // Drop rejected promise so the next acquire can retry (e.g. network came online).
+    entry.createPromise = null;
+    entry.instance = null;
+    throw err;
+  }
 }
 
 export function releaseFaceLandmarker(opts?: FaceLandmarkerOpts): void {
@@ -94,8 +104,13 @@ export function releaseFaceLandmarker(opts?: FaceLandmarkerOpts): void {
 
   entry.disposeTimer = window.setTimeout(() => {
     if (entry!.refCount > 0 || !entry!.instance) return;
-    entry!.instance.close();
+    try {
+      entry!.instance.close();
+    } catch {
+      /* ignore */
+    }
     entry!.instance = null;
+    entry!.createPromise = null;
     entry!.disposeTimer = null;
   }, CACHE_IDLE_DISPOSE_MS);
 }
