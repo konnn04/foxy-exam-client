@@ -1,7 +1,7 @@
 {
   "name": "foxy-exam-client",
   "private": true,
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "Foxy Exam — desktop client for proctored exams",
   "author": {
     "name": "Konnn04",
