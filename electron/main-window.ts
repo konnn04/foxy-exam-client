@@ -1,8 +1,9 @@
-import { BrowserWindow } from "electron";
+import { BrowserWindow, dialog } from "electron";
 import path from "path";
 import { ELECTRON_RUNTIME } from "./runtime";
 import { applyWindowSecurity } from "./security";
 import { appendMainLog, isDiagnosticMode } from "./diagnostic-log";
+import { isExamCloseGuardActive, getExamCloseGuardMessage, setExamCloseGuard } from "./exam-close-guard";
 
 export const createMainWindow = () => {
   const allowDebug = isDiagnosticMode();
@@ -53,6 +54,37 @@ export const createMainWindow = () => {
   if (allowDebug) {
     mainWindow.webContents.openDevTools({ mode: "detach" });
   }
+
+  let allowCloseWithoutConfirm = false;
+  mainWindow.on("close", (event) => {
+    if (allowCloseWithoutConfirm) {
+      return;
+    }
+    if (!isExamCloseGuardActive()) {
+      return;
+    }
+    event.preventDefault();
+    void dialog
+      .showMessageBox(mainWindow, {
+        type: "warning",
+        title: "Đang làm bài thi",
+        message: getExamCloseGuardMessage(),
+        buttons: ["Ở lại làm bài", "Đóng ứng dụng"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+      .then(({ response }) => {
+        if (response === 1) {
+          setExamCloseGuard(false);
+          allowCloseWithoutConfirm = true;
+          mainWindow.close();
+        }
+      })
+      .catch(() => {
+        /* user dismissed — stay */
+      });
+  });
 
   return mainWindow;
 };

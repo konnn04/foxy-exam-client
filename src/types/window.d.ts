@@ -6,6 +6,8 @@ declare global {
       isElectron: boolean;
       /** When true, main process allows privileged IPC (process list, kill apps, telemetry, etc.). */
       setExamIpcSession?: (active: boolean) => Promise<{ ok: boolean }>;
+      /** Cảnh báo khi đóng cửa sổ trong lúc làm bài (Electron main). */
+      setExamCloseGuard?: (opts: { active: boolean; message?: string }) => Promise<{ ok: boolean }>;
       getScreenCount: () => Promise<number>;
       getRunningBannedApps: (bannedApps?: string[], whitelistApps?: string[]) => Promise<string[]>;
       getNetworkInfo: () => Promise<{ ip: string, mac: string }[]>;

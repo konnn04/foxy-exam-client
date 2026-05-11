@@ -10,6 +10,18 @@ import { ExamPrecheck } from "./exam-take/exam-precheck";
 import { ExamSession } from "./exam-take/exam-session";
 import { useElectronIpcExamSession } from "@/hooks/use-electron-ipc-exam-session";
 import { useElectronExamStrictWindow } from "@/hooks/use-electron-exam-strict-window";
+import { livekitPublisher } from "@/lib/livekit-publisher";
+
+function examUsesCameraForPrecheck(c: ExamTrackingConfig): boolean {
+  return (
+    c.level === "strict" ||
+    Boolean(c.requireCamera) ||
+    Boolean(c.requireFaceAuth) ||
+    Boolean(c.monitorGaze) ||
+    c.detectBannedObjects === true ||
+    c.requireDualCamera === true
+  );
+}
 
 export default function ExamTakePage() {
   const { examId, attemptId } = useParams<{
@@ -37,7 +49,7 @@ export default function ExamTakePage() {
       scrStream: MediaStream | null,
       config: ExamTrackingConfig,
       _proctorConfig: any,
-      opts?: { mobileRelayOnly?: boolean },
+      opts?: { mobileRelayOnly?: boolean; skipBegin?: boolean },
     ) => {
       setCameraStream(camStream);
       setScreenStream(scrStream);
@@ -45,13 +57,28 @@ export default function ExamTakePage() {
       setMobileRelayOnly(opts?.mobileRelayOnly ?? false);
 
       try {
-        if (examId && attemptId) {
-          let beginBody: Record<string, unknown> = {};
+        if (examId && attemptId && !opts?.skipBegin) {
+          const streamSignals = {
+            has_desktop_video:
+              !examUsesCameraForPrecheck(config) ||
+              livekitPublisher.hasAliveLocalCameraVideo(camStream),
+            has_screen_share:
+              !(config.level === "strict" || config.requireScreenShare === true) ||
+              Boolean(
+                scrStream?.getVideoTracks?.().some((t) => t.readyState === "live"),
+              ),
+            has_mobile_video:
+              config.requireDualCamera !== true ||
+              livekitPublisher.hasActiveMobileRelayVideo(),
+          };
+
+          let beginBody: Record<string, unknown> = { ...streamSignals };
 
           if (config.lockDevice && config.device_lock_secret) {
             const deviceInfo = await collectDeviceInfo();
             const fp = await generateFingerprint(deviceInfo, config.device_lock_secret);
             beginBody = {
+              ...beginBody,
               device_fingerprint: fp.fingerprint,
               device_info: fp.info,
               device_checksum: fp.checksum,
@@ -81,6 +108,19 @@ export default function ExamTakePage() {
         if (e?.response?.data?.error === "device_changed") {
           toast.error("Thiết bị không khớp với phiên thi. Vui lòng sử dụng cùng thiết bị.");
           navigate("/dashboard");
+          return;
+        }
+        if (e?.response?.data?.error === "face_identity_required") {
+          toast.error(
+            e?.response?.data?.message
+            || "Vui lòng hoàn tất xác thực khuôn mặt (3 góc) trước khi bắt đầu làm bài.",
+          );
+          return;
+        }
+        const err = e?.response?.data?.error as string | undefined;
+        const msg = e?.response?.data?.message as string | undefined;
+        if (err === "precheck_signals_required" || err === "desktop_camera_not_ready" || err === "screen_share_not_ready" || err === "mobile_camera_not_ready" || err === "mobile_relay_not_ack") {
+          toast.error(msg || "Chưa đủ điều kiện camera / màn hình. Vui lòng hoàn tất bước kiểm tra rồi thử lại.");
           return;
         }
         console.error(e);

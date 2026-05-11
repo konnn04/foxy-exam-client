@@ -12,6 +12,8 @@ const CRITICAL_EVENT_TYPES = new Set([
   "tab_switch",
   "devtools",
   "screenshot",
+  "keyboard_shortcut",
+  "copy_attempt",
   "banned_app_detected",
   "multiple_screens",
   "screen_share_stopped",

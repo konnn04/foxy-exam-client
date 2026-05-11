@@ -277,9 +277,15 @@
     "cancelExam": "Hủy bài thi",
     "webExam": "Thi qua Web",
     "screenSharePermissionError": "Cần cấp quyền chia sẻ màn hình để vào thi.",
+    "screenShareStarting": "Đang bật chia sẻ màn hình…",
     "notEligible": "Không đủ điều kiện",
     "backToHome": "Về trang chủ",
     "connectingSupervisor": "Đang kết nối hệ thống giám sát...",
+    "waitingMandatoryStreams": "Đang chờ đủ luồng video bắt buộc…",
+    "waitingMandatoryStreamsHint": "Bật webcam và giữ điện thoại (QR) phát video ổn định. Hệ thống sẽ tự vào thi khi máy chủ xác nhận đủ luồng.",
+    "waitingMandatoryStreamsToast": "Chưa đủ luồng video — đang chờ camera phụ và webcam…",
+    "streamsReadyCheckError": "Không kiểm tra được luồng video với máy chủ.",
+    "streamsNotReadyTimeout": "Hết thời gian chờ luồng video. Kiểm tra QR điện thoại và camera, rồi thử lại bước camera kép.",
     "environmentCheckDesc": "Kiểm tra môi trường trước khi vào thi",
     "checkMultiScreen": "Kiểm tra đa màn hình",
     "checkBannedApps": "Quét ứng dụng cấm",
@@ -335,7 +341,17 @@
     "wsDisconnectBlur": "Mất kết nối mạng hoặc máy chủ giám sát. Đang kết nối lại...",
     "violationProhibitedObject": "Hệ thống phát hiện vật thể bị cấm trong khung hình camera.",
     "violationFaceFailed": "Cảnh báo: xác thực khuôn mặt không đạt.",
+    "violationKeyboardShortcut": "Phím tắt hoặc tổ hợp phím bị cấm trong lúc thi.",
+    "violationDevtools": "Công cụ nhà phát triển (DevTools) — không được phép.",
+    "violationScreenshot": "Thao tác chụp màn hình bị cấm.",
+    "violationCopyAttempt": "Sao chép / cắt nội dung trong lúc thi không được phép.",
     "violationGeneric": "Giám sát ghi nhận vi phạm ({{type}}).",
+    "violationMobileFaceSpotFailed": "Hệ thống vừa kiểm tra camera phụ: khuôn mặt không khớp hoặc không thấy rõ. Hãy nhìn thẳng vào camera điện thoại theo khung hướng dẫn.",
+    "violationWindowBlur": "Bạn đã chuyển sang cửa sổ hoặc ứng dụng khác — hãy quay lại màn hình thi.",
+    "violationTabSwitch": "Phát hiện chuyển tab — chỉ dùng tab làm bài thi.",
+    "violationMultiPerson": "Phát hiện nhiều người trong khung camera — chỉ một mình bạn được phép trong khung.",
+    "violationMobileLayout": "Camera phụ lệch bố cục: căn laptop và người theo khung trên trang camera điện thoại.",
+    "violationMobileAngle": "Góc camera phụ có thể bị lệch — chỉnh lại để thấy rõ mặt và bàn phím.",
     "liveKitConnectError": "Không thể kết nối giám sát LiveKit. Vui lòng thử vào lại bài thi.",
     "examSuspended": "Bài thi đã bị đình chỉ",
     "examSuspendedReason": "Giám thị đã buộc dừng bài thi của bạn.",
@@ -353,7 +369,8 @@
     "questionList": "Danh sách câu",
     "allQuestions": "Tất cả câu hỏi",
     "expandNav": "Mở thanh câu",
-    "collapseNav": "Thu gọn thanh câu"
+    "collapseNav": "Thu gọn thanh câu",
+    "closeGuardMessage": "Bạn đang làm bài thi. Đóng ứng dụng hoặc rời trang có thể làm mất phần chưa nộp và bị ghi nhận theo quy chế thi."
   },
   "proctoring": {
     "level": "Mức độ giám sát",
@@ -434,12 +451,14 @@
     "complete": "Hoàn thành"
   },
   "spotCheck": {
-    "title": "Xác minh camera phụ",
-    "subtitle": "Nhìn vào camera điện thoại ngay!",
-    "instructions": "Quay mặt về phía camera điện thoại để hệ thống xác minh danh tính. Bạn có 10 giây.",
-    "done": "Tôi đã nhìn vào camera phụ",
-    "success": "Xác minh thành công!",
-    "failed": "Hết thời gian xác minh",
-    "failedDesc": "Đã ghi nhận vi phạm nhẹ. Hãy sẵn sàng cho lần kiểm tra tiếp theo."
+    "title": "Quay điện thoại về phía bạn",
+    "subtitle": "Hệ thống đang kiểm tra ngẫu nhiên — làm theo hướng dẫn dưới đây.",
+    "instructions": "Trong khung điện thoại: phần dưới thấy laptop, phần trên thấy bạn và mặt rõ. Giữ ổn định trong thời gian đếm ngược.",
+    "done": "Tôi đã quay đúng như yêu cầu",
+    "success": "Đã ghi nhận. Cảm ơn bạn!",
+    "failed": "Hết thời gian",
+    "failedDesc": "Lần sau hãy quay điện thoại ngay khi có thông báo.",
+    "toastStartTitle": "Kiểm tra camera điện thoại",
+    "toastStartBody": "Quay điện thoại về phía bạn (dưới: laptop — trên: người). Làm theo ô hướng dẫn trên màn hình."
   }
 }

@@ -277,9 +277,15 @@
     "cancelExam": "Cancel Exam",
     "webExam": "Web Exam",
     "screenSharePermissionError": "Screen sharing permission is required to enter the exam.",
+    "screenShareStarting": "Turning on screen sharing…",
     "notEligible": "Not Eligible",
     "backToHome": "Back to Home",
     "connectingSupervisor": "Connecting to monitoring system...",
+    "waitingMandatoryStreams": "Waiting for required video streams…",
+    "waitingMandatoryStreamsHint": "Turn on your webcam and keep the phone QR camera connected. The exam will start automatically when the server confirms all streams.",
+    "waitingMandatoryStreamsToast": "Required streams not ready yet — waiting for phone relay and webcam…",
+    "streamsReadyCheckError": "Could not verify streams with the server.",
+    "streamsNotReadyTimeout": "Timed out waiting for required streams. Check the phone QR and camera, then try the dual-camera step again.",
     "environmentCheckDesc": "Check environment before exam",
     "checkMultiScreen": "Multi-screen check",
     "checkBannedApps": "Banned apps scan",
@@ -335,7 +341,17 @@
     "wsDisconnectBlur": "Network or monitoring server disconnected. Reconnecting...",
     "violationProhibitedObject": "Prohibited object detected in camera frame.",
     "violationFaceFailed": "Warning: face verification failed.",
+    "violationKeyboardShortcut": "A blocked shortcut key was used during the exam.",
+    "violationDevtools": "Developer tools are not allowed during the exam.",
+    "violationScreenshot": "Screenshots are not allowed during the exam.",
+    "violationCopyAttempt": "Copy/cut from the exam is not allowed.",
     "violationGeneric": "Monitoring recorded a violation ({{type}}).",
+    "violationMobileFaceSpotFailed": "Secondary camera check failed: face not clear or not matching. Look straight at your phone camera per the layout guide.",
+    "violationWindowBlur": "You switched to another window or app — return to the exam screen.",
+    "violationTabSwitch": "Tab switch detected — stay on the exam tab only.",
+    "violationMultiPerson": "Multiple people detected in camera — only you may be in frame.",
+    "violationMobileLayout": "Phone camera layout drifted: align laptop and yourself per the guide on the phone page.",
+    "violationMobileAngle": "Secondary camera angle may be off — adjust so your face and keyboard are visible.",
     "liveKitConnectError": "Cannot connect to LiveKit monitoring. Please try entering the exam again.",
     "examSuspended": "Exam Suspended",
     "examSuspendedReason": "The proctor has forced your exam to stop.",
@@ -353,7 +369,8 @@
     "questionList": "Question list",
     "allQuestions": "All questions",
     "expandNav": "Show question bar",
-    "collapseNav": "Hide question bar"
+    "collapseNav": "Hide question bar",
+    "closeGuardMessage": "You are taking an exam. Closing the app or leaving the page may lose unsubmitted work and may be recorded under exam rules."
   },
   "proctoring": {
     "level": "Proctoring level",
@@ -434,12 +451,14 @@
     "complete": "Complete"
   },
   "spotCheck": {
-    "title": "Secondary Camera Check",
-    "subtitle": "Look at your phone camera now!",
-    "instructions": "Turn your face toward the phone camera so the system can verify your identity. You have 10 seconds.",
-    "done": "I looked at the phone camera",
-    "success": "Verification successful!",
-    "failed": "Verification timed out",
-    "failedDesc": "A minor violation has been recorded. Be ready for the next check."
+    "title": "Point your phone at yourself",
+    "subtitle": "Random check in progress — follow the instructions below.",
+    "instructions": "In the phone frame: bottom shows your laptop; top shows you with a clear face. Hold steady until the timer ends.",
+    "done": "I've positioned the phone as required",
+    "success": "Recorded. Thank you!",
+    "failed": "Time's up",
+    "failedDesc": "Next time, turn your phone as soon as you see the alert.",
+    "toastStartTitle": "Phone camera check",
+    "toastStartBody": "Point your phone at yourself (bottom: laptop — top: your face). Follow the on-screen guide."
   }
 }

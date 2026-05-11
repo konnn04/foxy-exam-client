@@ -41,6 +41,8 @@ export const API_ENDPOINTS = {
   FACE_REGISTER_QR: "/student/face-register-qr",
   EXAM_FACE_REGISTER_QR: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/take/${attemptId}/face-register-qr`,
   EXAM_VERIFY_IDENTITY: (examId: string | number) => `/student/exams/${examId}/verify-identity`,
+  EXAM_RESUME_FACE_IDENTITY: (examId: string | number, attemptId: string | number) =>
+    `/student/exams/${examId}/take/${attemptId}/resume-face-identity`,
 
   // Exams Basic
   EXAM_DETAIL: (examId: string | number) => `/student/exams/${examId}`,
@@ -58,6 +60,8 @@ export const API_ENDPOINTS = {
   // Mobile Camera Check
   MOBILE_CAMERA_TOKEN: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/take/${attemptId}/mobile-camera-token`,
   MOBILE_CAMERA_RELAY_STATUS: (examId: string | number, attemptId: string | number) => `/student/exams/${examId}/take/${attemptId}/mobile-camera-relay-status`,
+  EXAM_STREAM_READINESS: (examId: string | number, attemptId: string | number) =>
+    `/student/exams/${examId}/take/${attemptId}/stream-readiness`,
 
   // Proctoring & Monitoring
   EXAM_MONITOR_EVENTS: (examId: string | number) => `/student/exams/${examId}/monitor/events`,

@@ -68,6 +68,43 @@ export function ExamSession({
   const authStore = JSON.parse(localStorage.getItem(STORAGE_KEYS.AUTH_STORE) || '{}');
   const currentUserId = authStore?.state?.user?.id || 0;
 
+  useEffect(() => {
+    const examIdNum = parseInt(String(examId || '0'), 10);
+    const attemptIdNum = parseInt(String(attemptId || '0'), 10);
+    if (!examIdNum || !attemptIdNum || !currentUserId) return;
+
+    const spotEnabled =
+      config?.requireDualCamera === true && config?.secondaryCameraFaceSpotCheck === true;
+    if (!spotEnabled) return;
+
+    const unsub = useExamSocketStore.getState().onMonitorEvent((raw: Record<string, unknown>) => {
+      const userId = Number(raw.user_id ?? raw.userId ?? 0);
+      const attId = Number(raw.attempt_id ?? raw.attemptId ?? 0);
+      if (userId !== currentUserId || attId !== attemptIdNum) return;
+
+      const topType = String(raw.event_type ?? raw.type ?? '');
+      if (topType !== 'secondary_camera_spot_check') return;
+
+      const pl = (raw.payload ?? raw.event_data ?? {}) as Record<string, unknown>;
+      const phase = String(pl.phase ?? '');
+      if (phase === 'start') {
+        toast.info(t('spotCheck.toastStartTitle'), t('spotCheck.toastStartBody'));
+        window.dispatchEvent(new CustomEvent('exam:mobile_face_check'));
+      } else if (phase === 'done') {
+        window.dispatchEvent(new CustomEvent('exam:mobile_face_check_done'));
+      }
+    });
+    return unsub;
+  }, [
+    examId,
+    attemptId,
+    currentUserId,
+    config?.requireDualCamera,
+    config?.secondaryCameraFaceSpotCheck,
+    toast,
+    t,
+  ]);
+
   // Chat state
   const [chatOpen, setChatOpen] = useState(false);
   const [chatUnread, setChatUnread] = useState(0);
@@ -105,6 +142,35 @@ export function ExamSession({
   useEffect(() => {
     blurReasonRef.current = blurReason;
   }, [blurReason]);
+
+  // Electron: xác nhận khi đóng cửa sổ trong lúc làm bài
+  useEffect(() => {
+    const api = typeof window !== "undefined" ? window.electronAPI : undefined;
+    if (!api?.setExamCloseGuard) return;
+    if (loading || submitting) {
+      void api.setExamCloseGuard({ active: false });
+      return;
+    }
+    void api.setExamCloseGuard({
+      active: true,
+      message: t("exam.closeGuardMessage"),
+    });
+    return () => {
+      void api?.setExamCloseGuard?.({ active: false });
+    };
+  }, [loading, submitting, t]);
+
+  // Trình duyệt: cảnh báo rời trang (không thay dialog hệ thống của Electron)
+  useEffect(() => {
+    if (typeof window === "undefined" || window.electronAPI?.isElectron) return;
+    if (loading || submitting) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [loading, submitting]);
 
   // ─── Telemetry lifecycle ─────────────────────────────────
   useEffect(() => {
@@ -206,33 +272,42 @@ export function ExamSession({
   const localIdx = globalIdx % perPage;
   const currentQuestion = currentQuestions[localIdx];
 
+  /** When true, screen track `ended` was caused by intentional teardown (submit / stop-exam), not user revoking share. */
+  const suppressScreenShareEndedTelemetryRef = useRef(false);
+
   const stopScreenCapture = useCallback(() => {
-    if (screenStreamRef.current) {
-      screenStreamRef.current.getTracks().forEach((t) => t.stop());
-      screenStreamRef.current = null;
+    suppressScreenShareEndedTelemetryRef.current = true;
+    try {
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach((t) => t.stop());
+        screenStreamRef.current = null;
+      }
+      setIsScreenSharing(false);
+    } finally {
+      suppressScreenShareEndedTelemetryRef.current = false;
     }
-    setIsScreenSharing(false);
   }, []);
 
-  // Set up screen stopping handler directly inside ExamSession
+  // Screen capture ended by user/OS → telemetry + state. Never stop tracks in this effect's cleanup (that killed
+  // capture on React Strict Mode remount and on any [submitting] re-run, shortening LiveKit egress to a few seconds).
   useEffect(() => {
-    if (screenStreamRef.current) {
-      const videoTrack = screenStreamRef.current.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.onended = () => {
-          setIsScreenSharing(false);
-          if (!submitting) {
-            telemetryPublisher.send("screen_share_stopped", {});
-          }
-        };
-      }
-    }
+    const stream = screenStreamRef.current;
+    const videoTrack = stream?.getVideoTracks()[0];
+    if (!videoTrack) return;
 
-    return () => {
-      stopScreenCapture();
+    const onEnded = () => {
+      if (suppressScreenShareEndedTelemetryRef.current) {
+        return;
+      }
+      setIsScreenSharing(false);
+      telemetryPublisher.send("screen_share_stopped", {});
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submitting]);
+
+    videoTrack.addEventListener("ended", onEnded);
+    return () => {
+      videoTrack.removeEventListener("ended", onEnded);
+    };
+  }, []);
 
   // Track mouse leaving the window (throttled to once every 5s)
   const lastCursorLeftRef = useRef(0);
@@ -275,7 +350,9 @@ export function ExamSession({
         if (d.attempt.time_remaining !== undefined && d.attempt.time_remaining !== null) {
           useExamStore.getState().setTimeLeft(Math.max(0, d.attempt.time_remaining));
         } else {
-          const started = new Date(d.attempt.started_at).getTime();
+          const started = d.attempt.started_at
+            ? new Date(d.attempt.started_at).getTime()
+            : Date.now();
           const durationMs = duration * 60 * 1000;
           const nowMs = Date.now();
           const remaining = Math.max(
@@ -415,9 +492,24 @@ export function ExamSession({
       if (!event || event.attemptId !== attemptIdNum || event.userId !== currentUserId) return;
 
       const vType = event.type || "violation";
+      const sev = String(event.severity || "").toLowerCase();
       const labels: Record<string, string> = {
         prohibited_object: t("exam.violationProhibitedObject"),
         face_verification_failed: t("exam.violationFaceFailed"),
+        wrong_face: t("exam.violationFaceFailed"),
+        wrong_face_mobile: t("exam.violationFaceFailed"),
+        mobile_face_verify_failed: t("exam.violationMobileFaceSpotFailed"),
+        keyboard_shortcut: t("exam.violationKeyboardShortcut"),
+        devtools: t("exam.violationDevtools"),
+        screenshot: t("exam.violationScreenshot"),
+        copy_attempt: t("exam.violationCopyAttempt"),
+        window_blur: t("exam.violationWindowBlur"),
+        tab_switch: t("exam.violationTabSwitch"),
+        multi_person: t("exam.violationMultiPerson"),
+        multiple_persons: t("exam.violationMultiPerson"),
+        multi_person_mobile: t("exam.violationMultiPerson"),
+        mobile_cam_layout_drift: t("exam.violationMobileLayout"),
+        cam_angle_drift: t("exam.violationMobileAngle"),
       };
       const message = labels[vType] || t("exam.violationGeneric", { type: vType });
 
@@ -431,9 +523,38 @@ export function ExamSession({
       const critical =
         event.severity === "critical" ||
         vType === "prohibited_object" ||
-        vType === "face_verification_failed";
+        vType === "face_verification_failed" ||
+        vType === "wrong_face" ||
+        vType === "wrong_face_mobile";
+
+      const toastForIntegrity =
+        critical ||
+        vType === "keyboard_shortcut" ||
+        vType === "screenshot" ||
+        vType === "copy_attempt" ||
+        vType === "devtools";
+
+      const toastProctoringHint =
+        toastForIntegrity ||
+        sev === "medium" ||
+        vType === "window_blur" ||
+        vType === "tab_switch" ||
+        vType === "multi_person" ||
+        vType === "multiple_persons" ||
+        vType === "multi_person_mobile" ||
+        vType === "mobile_cam_layout_drift" ||
+        vType === "cam_angle_drift" ||
+        vType === "mobile_face_verify_failed";
+
+      if (toastProctoringHint) {
+        const useError = critical || vType === "devtools";
+        queueMicrotask(() => {
+          if (useError) toast.error(message);
+          else toast.warning(message);
+        });
+      }
+
       if (critical) {
-        queueMicrotask(() => toast.error(message));
         if (!(DEVELOPMENT_MODE.ENABLED && NO_LOCKSCREEN_WHEN_DEV_MODE)) {
           startTransition(() => {
             setIsBlurred(true);
@@ -621,6 +742,79 @@ export function ExamSession({
       return () => { active = false; };
     }
   }, [isLiveKitConnected, config?.requireDualCamera, mobileRelayOnly]);
+
+  /** Client-side hint when a mandatory LiveKit/MediaStream track ends after the attempt has started. */
+  const streamDisconnectReportRef = useRef<{ desktopAt: number; mobileAt: number }>({
+    desktopAt: 0,
+    mobileAt: 0,
+  });
+  useEffect(() => {
+    if (!config?.requireDualCamera || mobileRelayOnly || !data?.attempt?.started_at) return;
+    const examIdNum = parseInt(String(examId), 10);
+    const attemptIdNum = parseInt(attemptId || "0", 10);
+    if (!examIdNum || !attemptIdNum) return;
+
+    const postViolation = async (
+      type: string,
+      description: string,
+      key: "desktopAt" | "mobileAt",
+    ) => {
+      const now = Date.now();
+      if (now - streamDisconnectReportRef.current[key] < 60_000) return;
+      streamDisconnectReportRef.current[key] = now;
+      try {
+        await api.post(API_ENDPOINTS.EXAM_PROCTOR_VIOLATIONS(String(examIdNum)), {
+          attempt_id: attemptIdNum,
+          type,
+          severity: "high",
+          description,
+          metadata: { source: "exam_client", stream: key === "desktopAt" ? "desktop_webcam" : "mobile_relay" },
+        });
+      } catch {
+        // Plug-in: Sentry / reporting webhook for proctor violation delivery failures
+      }
+    };
+
+    const cleanups: Array<() => void> = [];
+
+    const v = cameraStream?.getVideoTracks()[0];
+    if (v) {
+      const onEnded = () => {
+        void postViolation(
+          "primary_webcam_disconnected",
+          "Luồng webcam máy tính đã dừng — cần duy trì camera trong suốt bài thi.",
+          "desktopAt",
+        );
+      };
+      v.addEventListener("ended", onEnded);
+      cleanups.push(() => v.removeEventListener("ended", onEnded));
+    }
+
+    const mv = mobileStream?.getVideoTracks()[0];
+    if (mv) {
+      const onMobEnded = () => {
+        void postViolation(
+          "secondary_camera_disconnected",
+          "Mất tín hiệu camera phụ (điện thoại) — cần duy trì kết nối trong suốt bài thi",
+          "mobileAt",
+        );
+      };
+      mv.addEventListener("ended", onMobEnded);
+      cleanups.push(() => mv.removeEventListener("ended", onMobEnded));
+    }
+
+    return () => {
+      cleanups.forEach((fn) => fn());
+    };
+  }, [
+    examId,
+    attemptId,
+    config?.requireDualCamera,
+    mobileRelayOnly,
+    data?.attempt?.started_at,
+    cameraStream,
+    mobileStream,
+  ]);
 
   const dismissBlur = async () => {
     // Activate cooldown to prevent violation cascade during fullscreen transition
@@ -862,7 +1056,10 @@ export function ExamSession({
           <DualCameraSpotCheckOverlay
             examId={examId}
             attemptId={attemptId}
-            enabled={config?.requireDualCamera === true}
+            enabled={
+              config?.requireDualCamera === true &&
+              config?.secondaryCameraFaceSpotCheck === true
+            }
           />
         )}
 

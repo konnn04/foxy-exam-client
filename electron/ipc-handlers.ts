@@ -10,6 +10,7 @@ import { killBannedTokenCrossPlatform } from "./safe-banned-kill";
 import { captureMainException } from "./sentry-main-capture";
 import { PeripheralMonitor } from "./peripheral-monitor";
 import { assertExamIpcSession, isExamIpcSessionActive, setExamIpcSessionActive } from "./ipc-exam-session";
+import { setExamCloseGuard } from "./exam-close-guard";
 import {
   parseBannedAppNames,
   parseWhitelistAppNames,
@@ -49,12 +50,28 @@ function _getNetworkSnapshot(): { ip: string; mac: string }[] {
 }
 
 export const registerIpcHandlers = (getMainWindow: GetMainWindow) => {
+  ipcMain.handle("set-exam-close-guard", (_, payload: unknown) => {
+    const schema = z.object({
+      active: z.boolean(),
+      message: z.string().max(600).optional(),
+    });
+    const r = schema.safeParse(payload);
+    if (!r.success) {
+      return { ok: false as const };
+    }
+    setExamCloseGuard(r.data.active, r.data.message);
+    return { ok: true as const };
+  });
+
   ipcMain.handle("set-exam-ipc-session", (_, active: unknown) => {
     const r = z.boolean().safeParse(active);
     if (!r.success) {
       return { ok: false as const };
     }
     setExamIpcSessionActive(r.data);
+    if (!r.data) {
+      setExamCloseGuard(false);
+    }
     return { ok: true as const };
   });
 

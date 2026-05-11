@@ -11,6 +11,7 @@ import { API_ENDPOINTS } from "@/config";
 
 interface FaceAuthCheckProps {
   examId: string;
+  attemptId: string;
   stream: MediaStream;
   onSuccess: () => void;
   onCancel?: () => void;
@@ -18,7 +19,7 @@ interface FaceAuthCheckProps {
 
 type AuthPhase = "init" | "straight" | "left" | "right" | "verifying" | "done" | "failed";
 
-export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: FaceAuthCheckProps) {
+export function CameraFaceAuthCheck({ examId, attemptId, stream, onSuccess, onCancel }: FaceAuthCheckProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [phase, setPhase] = useState<AuthPhase>("init");
@@ -31,6 +32,7 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
   const lastInferAtRef = useRef(0);
   const holdStartRef = useRef(0);
   const capturedRef = useRef<string[]>([]);
+  const verifyInFlightRef = useRef(false);
 
   const ANGLE_LABELS = ["Nhìn thẳng", "Quay trái", "Quay phải"];
   const HOLD_MS = 600;
@@ -59,6 +61,7 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
 
     return () => {
       active = false;
+      verifyInFlightRef.current = false;
       cancelAnimationFrame(requestRef.current);
       faceLandmarkerRef.current = null;
       releaseFaceLandmarker({ blendshapes: true });
@@ -108,6 +111,9 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
 
   // ── Capture + advance angle ────────────────────────────────────────
   const captureAndAdvance = () => {
+    if (capturedRef.current.length >= 3 || verifyInFlightRef.current) {
+      return;
+    }
     const video = videoRef.current!;
     const canvas = canvasRef.current!;
     canvas.width = video.videoWidth;
@@ -126,9 +132,11 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
 
     const next = angleRef.current + 1;
     if (next >= 3) {
+      angleRef.current = 3;
+      phaseRef.current = "verifying";
       setAngleIdx(3);
       setPhase("verifying");
-      verifyIdentity();
+      void verifyIdentity();
     } else {
       angleRef.current = next;
       setAngleIdx(next);
@@ -138,31 +146,43 @@ export function CameraFaceAuthCheck({ examId, stream, onSuccess, onCancel }: Fac
 
   // ── Verify ─────────────────────────────────────────────────────────
   const verifyIdentity = async () => {
+    if (verifyInFlightRef.current) {
+      return;
+    }
+    verifyInFlightRef.current = true;
+    const snapshot = capturedRef.current.slice(0, 3);
     try {
-      if (capturedRef.current.length < 3) throw new Error("Chưa đủ ảnh");
-      const results = await Promise.all(
-        capturedRef.current.map(async (b64) => {
-          const fd = new FormData();
-          fd.append("image", b64.replace(/^data:image\/[a-z]+;base64,/, ""));
-          return (await api.post(API_ENDPOINTS.EXAM_VERIFY_IDENTITY(examId), fd)).data.match === true;
-        })
+      if (snapshot.length !== 3) throw new Error("Chưa đủ ảnh");
+      const images = snapshot.map((b64) =>
+        b64.replace(/^data:image\/[a-z]+;base64,/, ""),
       );
-      if (results.every((m) => m)) {
+      const { data } = await api.post(API_ENDPOINTS.EXAM_VERIFY_IDENTITY(examId), {
+        attempt_id: Number(attemptId),
+        images,
+      });
+      if (data?.match === true) {
+        phaseRef.current = "done";
         setPhase("done");
         setTimeout(onSuccess, 800);
       } else {
         toast.error("Khuôn mặt không khớp. Vui lòng thử lại!");
+        phaseRef.current = "failed";
         setPhase("failed");
       }
     } catch (e: any) {
       toast.error(e?.response?.data?.message || "Lỗi xác minh");
+      phaseRef.current = "failed";
       setPhase("failed");
+    } finally {
+      verifyInFlightRef.current = false;
     }
   };
 
   const retry = () => {
+    verifyInFlightRef.current = false;
     capturedRef.current = [];
     angleRef.current = 0;
+    phaseRef.current = "straight";
     setAngleIdx(0);
     setPhase("straight");
     holdStartRef.current = performance.now();

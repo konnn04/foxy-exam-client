@@ -491,11 +491,18 @@ class LiveKitPublisher {
       topic?: string,
     ) => {
       if (topic !== "proctor_command") return;
-      if (!participant?.metadata) return;
-
-      let meta: Record<string, unknown> = {};
-      try { meta = JSON.parse(participant.metadata); } catch { return; }
-      if (meta.role !== "proctor") return;
+      const id = participant?.identity ?? "";
+      const fromSupervisorAgent = id.startsWith("agent");
+      if (!fromSupervisorAgent) {
+        if (!participant?.metadata) return;
+        let meta: Record<string, unknown> = {};
+        try {
+          meta = JSON.parse(participant.metadata);
+        } catch {
+          return;
+        }
+        if (meta.role !== "proctor") return;
+      }
 
       let msg: { type: string; [k: string]: unknown };
       try { msg = JSON.parse(new TextDecoder().decode(payload)); } catch { return; }
@@ -604,6 +611,31 @@ class LiveKitPublisher {
 
   get isConnected(): boolean {
     return this.room?.state === ConnectionState.Connected;
+  }
+
+  /** Remote `-mobile` participant has a live video track (dual-cam relay). */
+  hasActiveMobileRelayVideo(): boolean {
+    const room = this.room;
+    if (!room || room.state !== ConnectionState.Connected) {
+      return false;
+    }
+    for (const p of room.remoteParticipants.values()) {
+      if (!p.identity?.endsWith("-mobile")) continue;
+      for (const pub of p.trackPublications.values()) {
+        if (pub.kind !== Track.Kind.Video || !pub.track) continue;
+        const mst = pub.track.mediaStreamTrack;
+        if (mst && mst.readyState === "live") {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /** Local exam webcam track is live (not ended / muted-away). */
+  hasAliveLocalCameraVideo(stream: MediaStream | null): boolean {
+    const t = stream?.getVideoTracks()[0];
+    return Boolean(t && t.readyState === "live");
   }
 }
 

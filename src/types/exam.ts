@@ -42,6 +42,12 @@ export interface ExamTrackingConfig {
   requireMic?: boolean;
   requireFaceAuth?: boolean;
   requireDualCamera?: boolean;
+  /** Đồng bộ exam-sys mergeMonitoringSettings → agent getConfig; bật mới có spot-check mặt phía agent */
+  secondaryCameraFaceSpotCheck?: boolean;
+  /** Bố cục người+laptop trên cam phụ */
+  secondaryCameraLayoutCheck?: boolean;
+  /** YOLO vật cấm trên cam phụ (cùng prohibitedObjectClasses) */
+  secondaryCameraDetectObjects?: boolean;
   detectBannedApps?: boolean;
   detectBannedObjects?: boolean;
   bannedApps?: string[];
@@ -73,7 +79,8 @@ export interface ExamData {
   };
   attempt: {
     id: number;
-    started_at: string;
+    started_at?: string | null;
+    submitted_at?: string | null;
     time_remaining?: number;
   };
   config?: ExamTrackingConfig;   // Config tracking mode (default: strict if missing)

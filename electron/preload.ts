@@ -3,6 +3,8 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: true,
   setExamIpcSession: (active: boolean) => ipcRenderer.invoke("set-exam-ipc-session", active),
+  setExamCloseGuard: (opts: { active: boolean; message?: string }) =>
+    ipcRenderer.invoke("set-exam-close-guard", opts),
   getScreenCount: () => ipcRenderer.invoke("get-screen-count"),
   getRunningBannedApps: (bannedApps?: string[], whitelistApps?: string[]) =>
     ipcRenderer.invoke("get-running-banned-apps", bannedApps, whitelistApps),

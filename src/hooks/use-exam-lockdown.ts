@@ -166,6 +166,8 @@ export function useExamLockdown({
     // Keyboard shortcuts
     const handleKeyDown = (e: KeyboardEvent) => {
       window.dispatchEvent(new CustomEvent("exam-keypressed", { detail: e.key }));
+      if (trackingLvl === "none" || !isFocusMode) return;
+
       if (e.key === "PrintScreen") {
         e.preventDefault();
         telemetryPublisher.send("screenshot", { source: "keydown_printscreen" });
@@ -187,7 +189,11 @@ export function useExamLockdown({
         return;
       }
       if (e.key === "F12") {
-        if (!DEVELOPMENT_MODE.ENABLED) e.preventDefault();
+        if (!DEVELOPMENT_MODE.ENABLED) {
+          e.preventDefault();
+          telemetryPublisher.send("devtools", { source: "keydown_f12" });
+        }
+        return;
       }
       
       // Block generic navigations on Production
@@ -203,6 +209,7 @@ export function useExamLockdown({
 
     // Copy/Cut
     const handleCopy = (e: ClipboardEvent) => {
+      if (trackingLvl === "none" || !isFocusMode) return;
       e.preventDefault();
       telemetryPublisher.send("copy_attempt", {});
     };

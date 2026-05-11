@@ -22,6 +22,7 @@ export function DualCameraSpotCheckOverlay({
   const [phase, setPhase] = useState<Phase>("idle");
   const [countdown, setCountdown] = useState(timeoutSec);
   const phaseRef = useRef<Phase>("idle");
+  const handleTimeoutRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (!enabled) return;
@@ -52,24 +53,7 @@ export function DualCameraSpotCheckOverlay({
     };
   }, [enabled, timeoutSec]);
 
-  useEffect(() => {
-    if (phase !== "active") return;
-
-    const intervalId = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(intervalId);
-          handleTimeout();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(intervalId);
-  }, [phase]);
-
-  const handleTimeout = useCallback(async () => {
+  const handleTimeout = useCallback(() => {
     setPhase("failed");
     phaseRef.current = "failed";
 
@@ -79,7 +63,26 @@ export function DualCameraSpotCheckOverlay({
     }, 3000);
   }, []);
 
-  const handleDone = useCallback(async () => {
+  handleTimeoutRef.current = handleTimeout;
+
+  useEffect(() => {
+    if (phase !== "active") return;
+
+    const intervalId = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(intervalId);
+          handleTimeoutRef.current();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [phase]);
+
+  const handleDone = useCallback(() => {
     setPhase("success");
     phaseRef.current = "success";
 
